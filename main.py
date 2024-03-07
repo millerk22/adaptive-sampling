@@ -14,7 +14,7 @@ from sklearn.datasets import make_blobs
 # the hard-coded list of methods to run for the tests
 METHODS = ["kmeans-rand", "kmeans-greedy", "lpkernel-rand", "lpkernel-greedy", "cvx-rand", "cvx-greedy"]
 # hard-coded list of random seeds for the tests
-SEEDS = np.arange(42,48)
+SEEDS = np.arange(42,47)
 
 
 def run_test(X, k, eval_energy_type, method_strings=["cvx-rand", "cvx-greedy"], seeds=np.arange(42,48),
@@ -25,7 +25,7 @@ def run_test(X, k, eval_energy_type, method_strings=["cvx-rand", "cvx-greedy"], 
     for count, method in enumerate(method_strings):
         sampler_energy_type, policy = method.split("-")
         greedy = policy == "greedy"
-        print(f"Method = {method}, {count}/{len(method_strings)}")
+        print(f"Method = {method}, {count+1}/{len(method_strings)}")
         for seed in tqdm(seeds):
             if sampler_energy_type == "cvx":
                 sampler_energy = ConvexHullEnergy(X, k)
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     assert args.evalenergy in ['kmeans', 'lp', 'lpkernel', 'cvx']
-    assert np.array([(es in POSSIBLE_ENERGIES) & (p in POSSIBLE_POLICIES) for es, p in METHODS.split('-')]).all()
+    assert np.array([(es in POSSIBLE_ENERGIES) & (p in POSSIBLE_POLICIES) for es, p in [m.split('-') for m in METHODS]]).all()
     
     
     # load dataset and run test for the corresponding experiment name
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     
     
     if args.save:
-        if not os.path.exists(args):
+        if not os.path.exists(args.resultsdir):
             os.makedirs(args.resultsdir)
         savename = os.path.join(args.resultsdir, args.dataset + ".pkl")
         print(f"Saving results to file {savename}...")
