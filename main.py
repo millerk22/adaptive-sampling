@@ -73,31 +73,24 @@ def load_dataset(dataset_name):
         X, _ = make_blobs(5*[500], n_features=200, cluster_std=0.1)
     elif dataset_name == "urban":
         X = np.load("./data/urban.npz")['H'].T
-        print(X.shape)
         X = 1.0*X
         X /= np.max(np.max(X))
     elif dataset_name == "salinas": # HSI dataset
         X = np.load("./data/salinasa.npz")['H']
         X = np.reshape(X, (X.shape[0]*X.shape[1], X.shape[2]))
-        print(X.shape)
         labels = np.load("./data/salinasa.npz")['labels']
         labels = np.reshape(labels, (labels.shape[0]*labels.shape[1], 1)).flatten()
-        print(labels.shape)
         mask = labels != 0
         X = X[mask]
-        print(X.shape)
         X = 1.0 * X
         X /= np.max(np.max(X))
     elif dataset_name == "pavia":   # HSI dataset
         X = np.load("./data/pavia.npz")['H']
         X = np.reshape(X, (X.shape[0]*X.shape[1], X.shape[2]))
-        print(X.shape)
         labels = np.load("./data/pavia.npz")['labels']
         labels = np.reshape(labels, (labels.shape[0]*labels.shape[1], 1)).flatten()
-        print(labels.shape)
         mask = labels != 0
         X = X[mask]
-        print(X.shape)
         X = 1.0 * X
         X /= np.max(np.max(X))
         
@@ -143,6 +136,8 @@ if __name__ == "__main__":
     X = load_dataset(args.dataset)
     
     # run the test
+    print(f"------------ Running Test for {args.dataset} ----------------")
+    print("\tk = {args.k}, numseeds = {args.numseeds}\n")
     results = run_test(X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples)
     
     
