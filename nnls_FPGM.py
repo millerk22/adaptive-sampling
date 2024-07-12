@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 
+
 """
 This is code implemented to mimic the nnls_FPGM method used by Gillis in the nmfbook MATLAB repository.
 """
@@ -87,7 +88,7 @@ def nnls_init(X, W, WtW, WtX):
     
     return H
 
-def nnls_FPGM(X, W, delta=1e-6, inneriter=500, alpha0=0.05, H0=None, returnH=True):
+def nnls_FPGM(X, W, delta=1e-6, inneriter=500, alpha0=0.05, H0=None, returnH=True, verbose=True):
     W = np.array(W) if sp.issparse(W) else np.asarray(W)
     m, n = X.shape
     m, r = W.shape
@@ -112,9 +113,9 @@ def nnls_FPGM(X, W, delta=1e-6, inneriter=500, alpha0=0.05, H0=None, returnH=Tru
     eps = 1.0
     
     while i <= inneriter and eps >= delta * eps0:
-        Hp = H
-        alpha_i = (np.sqrt(alpha**4 + 4 * alpha**2) - alpha**2) / 2
-        beta = alpha * (1 - alpha) / (alpha**2 + alpha_i)
+        Hp = H.copy()
+        alpha_i = (np.sqrt(alpha**4 + 4. * alpha**2) - alpha**2) / 2.
+        beta = alpha * (1.0 - alpha) / (alpha**2 + alpha_i)
         alpha = alpha_i
         
         H = Y - (WtW @ Y - WtX) / L
@@ -123,12 +124,70 @@ def nnls_FPGM(X, W, delta=1e-6, inneriter=500, alpha0=0.05, H0=None, returnH=Tru
         
         Y = H + beta * (H - Hp)
         
-        if i == 0:
+        if i == 1:
             eps0 = np.linalg.norm(H - Hp, 'fro')
         eps = np.linalg.norm(H - Hp, 'fro')
         i += 1
     
     energy_vals = normX2 - 2*(WtX * H).sum(axis=0) + (H*(WtW @ H)).sum(axis=0)
+    if verbose:
+        # print(i, inneriter, L)
+        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
+    if returnH:
+        return H, energy_vals
+    return None, energy_vals
+
+
+
+
+def nnls_OGM(X, W, delta=1e-3, maxiter=500, lam=1.0, H0=None, returnH=True, verbose=True):
+    W = np.array(W) if sp.issparse(W) else np.asarray(W)
+    m, n = X.shape
+    m, r = W.shape
+    WtW = W.T @ W
+    WtX = W.T @ X
+
+    normX2 = np.linalg.norm(X, axis=0)**2.
+    
+    if H0 is None:
+        H = nnls_init(X, W, WtW, WtX)
+    else:
+        H = H0
+    
+    L = np.linalg.norm(WtW, 2)
+    WtX = W.T @ X
+
+    H = projection_cvxhull(H)  
+    Y = H
+    Hinit = H.copy()
+    i = 0
+    eps0 = 0.0
+    eps = 1.0
+
+    #other = {}
+    while i <= maxiter and eps >= delta * eps0:
+        Hp = H.copy()
+        lam_ = 0.5*(1. + np.sqrt(1. + 4.*lam**2.))
+        beta = (lam - 1.0)/lam_ 
+        H = projection_cvxhull(Y - (WtW @ Y - WtX) / L)
+        Y = H + beta * (H - Hp)
+        
+        if i == 0:
+            eps0 = np.linalg.norm(H - Hp, 'fro')
+        eps = np.linalg.norm(H - Hp, 'fro')
+        # print(i, lam, lam_)
+        # print("\t", eps, delta*eps0, np.max(np.linalg.norm(H - Hp, axis=0)))
+        #other[i] = [np.linalg.norm(H - Hp, axis=0), np.argsort(np.linalg.norm(H-Hp, axis=0))[-10:][::-1]]
+        i += 1
+        lam = lam_
+
+    
+    energy_vals = normX2 - 2*(WtX * H).sum(axis=0) + (H*(WtW @ H)).sum(axis=0)
+    if verbose:
+        # init_diff = np.linalg.norm(Hinit - H, 'fro')**2.
+        # print(i, maxiter, L, init_diff)
+        # print(2.*L*init_diff / ((i + 2)**2.) )
+        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
 
     if returnH:
         return H, energy_vals

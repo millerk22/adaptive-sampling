@@ -138,6 +138,7 @@ class LpSubspaceEnergy(Energy):
 
 CHUNK_SIZE = 500
 
+
 class ConvexHullEnergy(Energy):
     def __init__(self, X, k, n_jobs=4):
         super().__init__(X, k)
