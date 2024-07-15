@@ -137,7 +137,7 @@ if __name__ == "__main__":
     
     # run the test
     print(f"------------ Running Test for {args.dataset} ----------------")
-    print("\tk = {args.k}, numseeds = {args.numseeds}\n")
+    print(f"\tk = {args.k}, numseeds = {args.numseeds}\n")
     results = run_test(X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples)
     
     
