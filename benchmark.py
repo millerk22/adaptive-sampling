@@ -6,18 +6,18 @@ from itertools import product
 import pickle
 import os
 from argparse import ArgumentParser
-import joblib
+from joblib import Parallel, delayed
 from nnls_FPGM import *
 
 
 def run_test(X, W, method, maxiter=500, verbose=True):
     if method == "fpgm":
-        return nnls_FPGM(X, W, delta=1e-3, inneriter=maxiter, alpha0=0.05, returnH=False, verbose=True)
+        _, info_dict =  nnls_FPGM(X, W, delta=1e-3, inneriter=maxiter, alpha0=0.05, returnH=False, verbose=True)
     elif method == "ogm":
-        return nnls_OGM(X, W, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
+        _, info_dict = nnls_OGM(X, W, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
     else:
         raise NotImplementedError(f"method = '{method}' not recognized...")
-    return None, None
+    return info_dict['iters'], info_dict['eps']
 
 
 def get_data(n, d, k, seed=42, ktrue=None, noise=0.03, hthresh=0.3):
@@ -41,6 +41,9 @@ def get_data(n, d, k, seed=42, ktrue=None, noise=0.03, hthresh=0.3):
     return X, W
 
 
+
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(description="Main file for running benchmarking of NMF projection.")
     parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
@@ -49,30 +52,33 @@ if __name__ == "__main__":
     parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
     parser.add_argument("--noise", default=0.03, type=float, help="Noise std to be added to the dataset")
     parser.add_argument("--maxiter", default=5000, type=int, help="Max # iters for the projection alrgorithm")
+    parser.add_argument("--njobs", default=8, type=int, help="# cores to split tests over")
     args = parser.parse_args()
     
     
-    Ns = np.logspace(2, 8, 21).astype(int)
+    Ns = np.logspace(2, 5, 21).astype(int)
     Ds = np.linspace(2, 200, 21).astype(int)
     seeds = np.arange(42, 42+args.numseeds)
 
     results = {}
     for method in ['ogm', 'fpgm']:
         print(f"------------ Running Benchmarks for {method} ----------------")
-        method_results = {}
+        method_results = defaultdict(dict)
         NDS = list(product(Ns, Ds))
+        
         for n, d in tqdm(NDS, total=len(NDS)):
             #print(f"\tn = {n}, d = {d}, numseeds = {args.numseeds}\n")
             Ks = [k_ for k_ in np.linspace(2, 20, 11).astype(int) if k_ < n]
-            for k in Ks:
-                iters, eps = [], []
-                for seed in seeds:
-                    X, W = get_data(n, d, k, seed=seed, noise=args.noise)
-                    _, info_dict = run_test(X, W, method, maxiter=args.maxiter, verbose=True)
-                    iters.append(info_dict['iters'])
-                    eps.append(info_dict['eps'])
-                method_results[(n,d,k)] = {'iters': iters, 'eps':eps}
-        
+            seed_by_iters, seed_by_eps = np.zeros((len(seeds), len(Ks))), np.zeros((len(seeds), len(Ks)))
+            for r, seed in enumerate(seeds):
+                X, W = get_data(n, d, Ks[-1], seed=seed, noise=args.noise)
+                iters_eps = Parallel(n_jobs=args.njobs)(delayed(run_test)(X, W[:,:k], method, maxiter=args.maxiter, verbose=True) for k in Ks)
+                iters, eps = zip(*iters_eps)
+                seed_by_iters[r,:] = list(iters)
+                seed_by_eps[r,:] = list(eps)
+            
+            method_results[d][n] = {'iters':seed_by_iters, 'eps':seed_by_eps}
+
         results['method'] = method_results
 
 
