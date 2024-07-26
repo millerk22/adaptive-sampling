@@ -2,9 +2,11 @@ import numpy as np
 from sklearn.utils.extmath import stable_cumsum
 from functools import partial
 from energies import *
+from time import perf_counter
 
 
-def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0, num_la_samples=100):
+def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0, swap_method=None, 
+                      num_la_samples=-1, max_swaps=None, report_timing=False):
     """
     Parameters
     ----------
@@ -38,6 +40,9 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
     """
     assert method in ['greedy', 'p', 'greedyla']
     n, d = X.shape
+    if num_la_samples < 0:
+        num_la_samples = n
+
     
     random_state = np.random.RandomState(seed)
 
@@ -50,7 +55,14 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
     Energy.add(sample_id)
 
     # Pick the remaining k-1 points
+    times = []
     for c in range(1, k):
+        # make sure Energy.dists and Energy.energy are non-negative
+        Energy.dists[Energy.dists <= 0] = 0.0
+        Energy.energy = Energy.dists.sum()
+        
+        if report_timing:
+            t0 = perf_counter()
         if method == 'greedy':
             sample_id = np.argmax(Energy.dists)
             Energy.add(sample_id)
@@ -75,7 +87,11 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
             Energy.add(sample_id)
             
         elif method == 'greedyla':
-            candidate_inds = random_state.choice(np.delete(np.arange(Energy.n), Energy.indices), num_la_samples, replace=False)
+            if num_la_samples < n:
+                candidate_inds = random_state.choice(np.delete(np.arange(Energy.n), Energy.indices), num_la_samples, replace=False)
+            else:
+                candidate_inds = np.delete(np.arange(Energy.n), Energy.indices)
+            
             results_dict = Energy.look_ahead(candidate_inds)
             energy_vals = np.array([results_dict[c]['energy'] for c in results_dict])
             sample_id  = candidate_inds[np.argmin(energy_vals)]
@@ -85,7 +101,45 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
         else:
             raise ValueError(f"Method {method} not recognized...")
         
-        
+        if report_timing:
+            t1 = perf_counter()
+            times.append(t1-t0)
+    
+    
 
+    if swap_method:
+        assert swap_method.split("-")[0] in ["greedyla", "p", "greedy"]
+        if max_swaps is None:
+            max_swaps = k**2
+        assert max_swaps == int(max_swaps)
+
+
+        if report_timing:
+            times.append(-1) # put in a negative value to delineate the times for adaptive sampling steps and the swap moves afterward
+            
+        
+        no_change_count = 0
+        for u in range(max_swaps):
+            if report_timing:
+                t0 = perf_counter()
+            swap_flag = Energy.swap_move(swap_method, j_adap=u % k, verbose=True)
+            if report_timing:
+                t1 = perf_counter()
+                times.append(t1-t0)
+            # termination check for the different cases
+            if swap_method == "greedy":
+                if not swap_flag:
+                    no_change_count += 1
+                else:
+                    no_change_count = 0
+                if no_change_count == k:
+                    break
+            else: # adaptive swaps with p < \infty (not "greedy") always return swap_flag = True, so this just handles the greedyla termination condition
+                if not swap_flag:
+                    break
+
+    if report_timing:
+        return times
+    
     return 
 

@@ -140,13 +140,12 @@ def nnls_FPGM(X, W, delta=1e-6, inneriter=500, alpha0=0.05, H0=None, returnH=Tru
 
 
 
-def nnls_OGM(X, W, delta=1e-3, maxiter=500, lam=1.0, H0=None, returnH=True, verbose=True):
+def nnls_OGM(X, W, delta=1e-3, maxiter=1000, lam=1.0, H0=None, returnH=True, verbose=False):
     W = np.array(W) if sp.issparse(W) else np.asarray(W)
     m, n = X.shape
     m, r = W.shape
     WtW = W.T @ W
     WtX = W.T @ X
-
     normX2 = np.linalg.norm(X, axis=0)**2.
     
     if H0 is None:
@@ -155,7 +154,6 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=500, lam=1.0, H0=None, returnH=True, verb
         H = H0
     
     L = np.linalg.norm(WtW, 2)
-    WtX = W.T @ X
 
     H = projection_cvxhull(H)  
     Y = H
@@ -175,18 +173,52 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=500, lam=1.0, H0=None, returnH=True, verb
         if i == 0:
             eps0 = np.linalg.norm(H - Hp, 'fro')
         eps = np.linalg.norm(H - Hp, 'fro')
-        # print(i, lam, lam_)
-        # print("\t", eps, delta*eps0, np.max(np.linalg.norm(H - Hp, axis=0)))
-        #other[i] = [np.linalg.norm(H - Hp, axis=0), np.argsort(np.linalg.norm(H-Hp, axis=0))[-10:][::-1]]
         i += 1
         lam = lam_
 
     
     energy_vals = normX2 - 2*(WtX * H).sum(axis=0) + (H*(WtW @ H)).sum(axis=0)
     if verbose:
-        # init_diff = np.linalg.norm(Hinit - H, 'fro')**2.
-        # print(i, maxiter, L, init_diff)
-        # print(2.*L*init_diff / ((i + 2)**2.) )
+        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
+
+    if returnH:
+        return H, energy_vals
+    return None, energy_vals
+
+
+
+def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False):
+    """
+    G_S = |S_ind| x n  numpy array Gram submatrix
+    """
+    G_SS = G_S[:,S_ind]
+    L = np.linalg.norm(G_SS, 2)
+    H = projection_cvxhull(np.linalg.pinv(G_SS)@ G_S)
+    Z = H.copy()
+
+    i = 0
+    eps0 = 0.0
+    eps = 1.0
+
+    while i <= maxiter and eps >= delta*eps0:
+        Hp = H.copy()
+        H = projection_cvxhull(Z - (G_SS @ Z - G_S)/L)
+        lam_ = 0.5*(1. + np.sqrt(1. + 4.*lam**2.))  
+        beta = (lam - 1.0)/lam_ 
+        Z = H + beta*(H - Hp)
+
+
+        if i == 0:
+            eps0 = np.linalg.norm(H - Hp, 'fro')
+            eps = eps0
+        else:
+            eps = np.linalg.norm(H-Hp, 'fro')
+
+        i += 1
+        lam = lam_
+    energy_vals = G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
+    energy_vals[energy_vals < 0] = 0.0
+    if verbose:
         return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
 
     if returnH:

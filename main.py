@@ -13,10 +13,14 @@ import scipy.sparse as sps
 
 from sklearn.datasets import make_blobs
 
-METHODS = ["passive", "p", "greedy", "p-1", "p-3", "p-5", "p-10"]
-#METHODS = ["greedyla"]
-def run_test(X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
-            kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100):
+# overall method string format:   "{ADAPTIVE SAMPLING METHOD}_{SWAP MOVES METHOD}", where there is no underscore nor second method string when no swap moves is applied
+
+# METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
+METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "p-2_greedyla"]
+
+
+def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
+            kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100, report_timing=False):
     assert type(num_la_samples) in [int, float]
     if type(num_la_samples) == float:
         num_la_samples = int(X.shape[0]*num_la_samples)
@@ -29,14 +33,19 @@ def run_test(X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
         Xfro_norm2 = np.linalg.norm(X, ord='fro')**2.
     
     for count, method_str in enumerate(method_strings):
-        print(f"Method = {method_str}, {count+1}/{len(method_strings)}")
-        method_parts = method_str.split("-")
-        if len(method_parts) > 1:
-            method, p_val = method_parts
-            p_val = float(p_val)
+        print(f"Overall Method = {method_str}, {count+1}/{len(method_strings)}")
+        if len(method_str.split("_")) == 2:
+            as_method, swap_method = method_str.split("_")
         else:
-            method = method_str
-            p_val = 2.0
+            as_method = method_str
+            swap_method = None
+
+        as_method_parts = as_method.split("-")
+        p_val = 2.0
+        if len(as_method_parts) > 1:
+            as_method, p_val = as_method_parts
+            p_val = float(p_val)
+        
         
         for seed in tqdm(seeds):
             results[method_str]["seeds"].append(seed)
@@ -49,22 +58,31 @@ def run_test(X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
             elif energy_type == "kmeans":
                 sampler_energy = KmeansEnergy(X, k)
             else:
-                print(f"Method = {method} not recognized, skipping")
+                print(f"Energy type = {energy_type} not recognized, skipping")
                 break
-            if method == "passive":
+            if as_method == "passive":
                 random_state = np.random.RandomState(seed)
                 init_point = random_state.choice(X.shape[0])
                 other_indices = np.delete(np.arange(X.shape[0]), [init_point])
                 sampler_energy.init_set([init_point] + list(random_state.choice(other_indices, k-1, replace=False)))
             else:
                 # perform the adaptive sampling
-                adaptive_sampling(X, k, sampler_energy, method=method, seed=seed, p=p_val, num_la_samples=num_la_samples)
+                times = adaptive_sampling(X, k, sampler_energy, method=as_method, seed=seed, p=p_val, num_la_samples=num_la_samples, swap_method=swap_method, report_timing=report_timing)
 
 
             results[method_str]["indices"].append(sampler_energy.indices)
             results[method_str]["energy"].append(sampler_energy.energy / Xfro_norm2)
             results[method_str]["energy_values"].append(np.array(sampler_energy.energy_values) / Xfro_norm2)
-    return results
+            if report_timing:
+                results[method_str]["times"].append(times)
+        if args.save:
+            if not os.path.exists(args.resultsdir):
+                os.makedirs(args.resultsdir)
+            savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
+            print(f"Saving (intermediate) results to file {savename}...")
+            with open(savename, 'wb') as rfile:
+                pickle.dump(results, rfile)
+    return 
 
 
 
@@ -84,6 +102,7 @@ def load_dataset(dataset_name):
         X = X[mask]
         X = 1.0 * X
         X /= np.max(np.max(X))
+        print(X.shape)
     elif dataset_name == "pavia":   # HSI dataset
         X = np.load("./data/pavia.npz")['H']
         X = np.reshape(X, (X.shape[0]*X.shape[1], X.shape[2]))
@@ -123,10 +142,11 @@ if __name__ == "__main__":
     parser.add_argument("--k", default=5, type=int, help="Number of samples to select")
     parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
     parser.add_argument("--save", default=1, type=int, help="Boolean (i.e., integer 1 or 0) of whether or not to save the results to file.")
-    parser.add_argument("--energy", default="kmeans", help="String name of the evaluation energy type; one of ['kmeans', 'lp', 'lpkernel', 'cvx']")
+    parser.add_argument("--energy", default="cvx", help="String name of the evaluation energy type; one of ['kmeans', 'lp', 'lpkernel', 'cvx']")
     parser.add_argument("--numseeds", default=1, type=int, help="Number of random trials (indexed by seeds) to perform")
-    parser.add_argument("--numlasamples", default=100, type=int, help="Number of samples to evaluate look ahead greedy method on")
+    parser.add_argument("--numlasamples", default=-1, type=int, help="Number of samples to evaluate look ahead greedy method on")
     parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
+    parser.add_argument("--time", default=0, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
     args = parser.parse_args()
     
     assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx']
@@ -138,15 +158,16 @@ if __name__ == "__main__":
     # run the test
     print(f"------------ Running Test for {args.dataset} ----------------")
     print(f"\tk = {args.k}, numseeds = {args.numseeds}\n")
-    results = run_test(X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples)
+    # results = run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time)
+    run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time)
     
     
-    if args.save:
-        if not os.path.exists(args.resultsdir):
-            os.makedirs(args.resultsdir)
-        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
-        print(f"Saving results to file {savename}...")
-        with open(savename, 'wb') as rfile:
-            pickle.dump(results, rfile)
+    # if args.save:
+    #     if not os.path.exists(args.resultsdir):
+    #         os.makedirs(args.resultsdir)
+    #     savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
+    #     print(f"Saving results to file {savename}...")
+    #     with open(savename, 'wb') as rfile:
+    #         pickle.dump(results, rfile)
         
 
