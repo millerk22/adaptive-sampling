@@ -16,7 +16,15 @@ def run_test(X, W, method, maxiter=500, verbose=True):
     elif method == "ogm":
         _, info_dict = nnls_OGM(X, W, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
     elif method == "ogmgram": # in this case the variable W is actually an array of subset indices, not a matrix
-        _, info_dict = nnls_OGM_gram(X[:,W].T @ X, W, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
+        G = X.T @ X
+        G_diag = np.diagonal(G)
+        G_S = G[W, :]
+        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
+    elif method == "ogmgramsub": # in this case the variable W is actually an array of subset indices, not a matrix
+        G = X.T @ X
+        G_diag = np.diagonal(G)
+        G_S = G[W, :]
+        _, info_dict = nnls_OGM_gram_sub(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
     else:
         raise NotImplementedError(f"method = '{method}' not recognized...")
     return info_dict['iters'], info_dict['eps']
@@ -64,7 +72,7 @@ if __name__ == "__main__":
     seeds = np.arange(42, 42+args.numseeds)
 
     results = {}
-    for method in ['ogmgram']:
+    for method in ['ogmgram', 'ogmgramsub']:
         print(f"------------ Running Benchmarks for {method} ----------------")
         method_results = defaultdict(dict)
         NDS = list(product(Ns, Ds))
@@ -74,7 +82,7 @@ if __name__ == "__main__":
             Ks = [k_ for k_ in np.linspace(2, 20, 11).astype(int) if k_ < n]
             seed_by_iters, seed_by_eps = np.zeros((len(seeds), len(Ks))), np.zeros((len(seeds), len(Ks)))
             for r, seed in enumerate(seeds):
-                if method == "ogmgram":
+                if "gram" in method:
                     X, subset = get_data(n, d, Ks[-1], seed=seed, noise=args.noise, return_subset=True)
                     iters_eps = Parallel(n_jobs=args.njobs)(delayed(run_test)(X, subset[:k], method, maxiter=args.maxiter, verbose=True) for k in Ks)
                 else:

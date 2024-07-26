@@ -224,3 +224,49 @@ def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=
     if returnH:
         return H, energy_vals
     return None, energy_vals
+
+
+
+
+def nnls_OGM_gram_sub(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False):
+    """
+    G_S = |S_ind| x n  numpy array Gram submatrix
+    """
+    G_SS = G_S[:,S_ind]
+    L = np.linalg.norm(G_SS, 2)
+    H = projection_cvxhull(np.linalg.pinv(G_SS)@ G_S)
+    Z = H.copy()
+
+    i = 0
+    eps0 = 0.0
+    eps = 1.0
+    active_set = np.ones(G_diag.size, dtype=bool)
+
+    while i <= maxiter and eps >= delta*eps0*active_set.sum()/active_set.size:
+        Hp = H.copy()
+        H[:,active_set] = projection_cvxhull(Z[:,active_set] - (G_SS @ Z[:,active_set] - G_S[:,active_set])/L)
+        lam_ = 0.5*(1. + np.sqrt(1. + 4.*lam**2.))  
+        beta = (lam - 1.0)/lam_ 
+        Z[:,active_set] = H[:,active_set] + beta*(H[:,active_set] - Hp[:,active_set])
+
+
+        if i == 0:
+            eps0 = np.linalg.norm(H - Hp, 'fro')
+            eps = eps0
+        else:
+            eps_ = np.zeros_like(active_set)
+            eps_[active_set] = np.linalg.norm((H-Hp)[:,active_set], axis=0)
+            active_set = eps_ > delta*eps0/active_set.size # restrict to only stepping on those points that are contributing more than what we'd expect
+            eps = eps_[active_set].sum()
+
+
+        i += 1
+        lam = lam_
+    energy_vals = G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
+    energy_vals[energy_vals < 0] = 0.0
+    if verbose:
+        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
+
+    if returnH:
+        return H, energy_vals
+    return None, energy_vals
