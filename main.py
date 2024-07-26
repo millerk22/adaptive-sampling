@@ -16,7 +16,7 @@ from sklearn.datasets import make_blobs
 # overall method string format:   "{ADAPTIVE SAMPLING METHOD}_{SWAP MOVES METHOD}", where there is no underscore nor second method string when no swap moves is applied
 
 # METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
-METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "p-2_greedyla"]
+METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "p-2_greedyla", "passive", "p-1", "p-3", "p-5"]
 
 
 def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
