@@ -127,6 +127,18 @@ def load_dataset(dataset_name):
         X, bw = smile(10000)
     elif dataset_name == "outliers":
         X, _ = outliers(10000)
+    elif dataset_name == "test":
+        rand_state_ = np.random.RandomState(42)
+        n, d, ktrue = 500, 50, 5
+        noise = 0.04
+        hthresh = 0.3
+        Wtrue = rand_state_.rand(d, ktrue) 
+        Htrue = rand_state_.rand(ktrue, n)
+        Htrue /= Htrue.sum(axis=0).reshape(1, n)
+        Htrue *= np.maximum(rand_state_.rand(1, n), hthresh)
+        N = rand_state_.randn(d, n)*noise
+        X = Wtrue @ Htrue + N
+        X = X.T
     else:
         raise ValueError(f"Dataset = {dataset_name} not recognized")
     return X

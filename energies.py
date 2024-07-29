@@ -67,13 +67,11 @@ class KmeansEnergy(Energy):
     def look_ahead(self, candidates=None):
         if candidates is None:
             candidates = np.delete(np.arange(self.n), self.indices)
-        cand_la_results = {c : {} for c in candidates}
+        
         cand_dists = euclidean_distances(self.X[candidates,:], self.X, Y_norm_squared=self.x_squared_norms, squared=True)
         np.minimum(self.dists, cand_dists, out=cand_dists)
-        for i, c in enumerate(candidates):
-            cand_la_results[c]['dists'] = cand_dists[i,:]
-            cand_la_results[c]['energy'] = cand_la_results[c]['dists'].sum()
-        return cand_la_results
+        candidate_energy_vals = cand_dists.sum(axis=1).flatten()
+        return candidate_energy_vals
 
     def update_from_look_ahead(self, c, choice_dict):
         self.dists = choice_dict['dists']
@@ -171,24 +169,29 @@ class ConvexHullEnergy(Energy):
         self.indices.append(i)
         self.k_sel += 1
         self.unselected_inds = np.delete(np.arange(self.n), self.indices)
-        # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
-        if self.G is not None:
-            outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))]) for chunk in self.chunk_inds)
-            self.H = np.vstack([out[0][:,self.k_sel:].T for out in outs])
-            self.dists = np.concatenate([out[1][self.k_sel:]/self.Xfro_norm2 for out in outs])
-        else:
-            outs = Parallel(n_jobs=self.n_jobs)(
-                    delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T) for chunk in self.chunk_inds)
-            self.H = np.vstack([out[0].T for out in outs])
-            self.dists = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
-        # self.H[self.indices,:self.k_sel] = np.eye(self.k_sel)
-        # self.H[self.unselected_inds,:self.k_sel] = np.vstack([out[0].T for out in outs])
-        # self.dists[self.indices] = 0.0
-        # self.dists[self.unselected_inds] = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
-        
-        assert self.dists.size == self.n
-        self.energy = self.dists.sum()
+        # # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
+        # if self.G is not None:
+        #     outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))]) for chunk in self.chunk_inds)
+        #     self.H = np.vstack([out[0][:,self.k_sel:].T for out in outs])
+        #     self.dists = np.concatenate([out[1][self.k_sel:]/self.Xfro_norm2 for out in outs])
+        # else:
+        #     outs = Parallel(n_jobs=self.n_jobs)(
+        #             delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T) for chunk in self.chunk_inds)
+        #     self.H = np.vstack([out[0].T for out in outs])
+        #     self.dists = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
+        # # self.H[self.indices,:self.k_sel] = np.eye(self.k_sel)
+        # # self.H[self.unselected_inds,:self.k_sel] = np.vstack([out[0].T for out in outs])
+        # # self.dists[self.indices] = 0.0
+        # # self.dists[self.unselected_inds] = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
+        energy, dists, H = self.compute_projection(self.indices, returnH=True)
+        self.H = H 
+        self.dists = dists 
+        self.energy = energy 
         self.energy_values.append(self.energy)
+
+        assert self.dists.size == self.n
+        # self.energy = self.dists.sum()
+        # self.energy_values.append(self.energy)
         return
     
     def init_set(self, inds): # done so that we can track the energy values throughout all choices.
@@ -197,60 +200,81 @@ class ConvexHullEnergy(Energy):
             self.add(i)
         return
 
+    def compute_projection(self, inds, returnH=False):
+        k_ = 0
+        if self.G is not None:
+            k_ = len(inds)
+            outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH) for chunk in self.chunk_inds)
+        else:
+            outs = Parallel(n_jobs=self.n_jobs)(
+                        delayed(nnls_OGM)(self.X[chunk,:].T, self.X[inds,:].T, returnH=returnH) for chunk in self.chunk_inds)
+            
+        dists = np.concatenate([out[1][k_:]/self.Xfro_norm2 for out in outs])
+        if returnH:
+            H = np.vstack([out[0][:,k_:].T for out in outs])
+        else:
+            H = None     
+        return dists.sum(), dists, H 
+        
+
+
     def look_ahead(self, candidates=None, verbose=True):
         if candidates is None:
             candidates = self.unselected_inds
-        cand_la_results = {c:{} for c in candidates}
         if verbose:
             iterator = tqdm(candidates, total=len(candidates))
             iterator.set_description("Computing look-ahead values...")
         else:
             iterator = candidates
-        for c in iterator:
-            # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
-            if self.G is not None:
-                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=False) for chunk in self.chunk_inds)
-                dists_c = np.concatenate([out[1][self.k_sel:]/self.Xfro_norm2 for out in outs])
-            else:
-                outs = Parallel(n_jobs=self.n_jobs)(
-                        delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T, returnH=False) for chunk in self.chunk_inds)
-                dists_c = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
-            # dists_c = np.zeros(self.n)
-            # dists_c[np.setdiff1d(self.unselected_inds, [c])] = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
-            
-            assert dists_c.size == self.n
-            cand_la_results[c]['dists'] = dists_c
-            cand_la_results[c]['energy'] = cand_la_results[c]['dists'].sum()
-            
-        return cand_la_results
 
-    def update_from_look_ahead(self, c, choice_dict):
-        if self.sparse_flag:
-            self.W[self.k_sel,:] = self.X[c,:].todense().A1
-        else:
-            self.W[self.k_sel,:] = self.X[c,:]
-        self.indices.append(c)
-        self.k_sel += 1
-        self.unselected_inds = np.setdiff1d(self.unselected_inds, [c])
-        self.dists = choice_dict['dists']
-        self.energy = choice_dict['energy']
-        self.energy_values.append(self.energy)
+        candidate_energy_vals = np.array([self.compute_projection(self.indices + [c])[0] for c in iterator])
+        # for i, c in iterator:
+        #     energy_c, dists_c, _ = self.compute_projection(self.indices)
+        #     candidate_energy_vals[i] = energy_c
+            
+        #     # # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
+        #     # if self.G is not None:
+        #     #     outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=False) for chunk in self.chunk_inds)
+        #     #     dists_c = np.concatenate([out[1][self.k_sel:]/self.Xfro_norm2 for out in outs])
+        #     # else:
+        #     #     outs = Parallel(n_jobs=self.n_jobs)(
+        #     #             delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T, returnH=False) for chunk in self.chunk_inds)
+        #     #     dists_c = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
+        #     # # dists_c = np.zeros(self.n)
+        #     # # dists_c[np.setdiff1d(self.unselected_inds, [c])] = np.concatenate([out[1]/self.Xfro_norm2 for out in outs])
+            
+        #     # assert dists_c.size == self.n
+        #     # candidate_energy_vals[i] = dists_c.sum()
 
-        # we have to recompute the projection to get the H matrix, since in the look_ahead function call we didn't record it for every possible candidate to save on space
-        # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
-        if self.G is not None:
-            outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
-            self.H = np.vstack([out[0][:,self.k_sel:].T for out in outs])
-        else:
-            outs = Parallel(n_jobs=self.n_jobs)(
-                    delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T, returnH=True) for chunk in self.chunk_inds)
-            self.H = np.vstack([out[0].T for out in outs])
-        # self.H[self.indices, :self.k_sel] = np.eye(self.k_sel)
-        # self.H[self.unselected_inds, :self.k_sel] = np.vstack([out[0].T for out in outs])
+        return candidate_energy_vals
+
+    # def update_from_look_ahead(self, c, choice_dict):
+    #     if self.sparse_flag:
+    #         self.W[self.k_sel,:] = self.X[c,:].todense().A1
+    #     else:
+    #         self.W[self.k_sel,:] = self.X[c,:]
+    #     self.indices.append(c)
+    #     self.k_sel += 1
+    #     self.unselected_inds = np.setdiff1d(self.unselected_inds, [c])
+    #     self.dists = choice_dict['dists']
+    #     self.energy = choice_dict['energy']
+    #     self.energy_values.append(self.energy)
+
+    #     # we have to recompute the projection to get the H matrix, since in the look_ahead function call we didn't record it for every possible candidate to save on space
+    #     # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
+    #     if self.G is not None:
+    #         outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k_sel), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
+    #         self.H = np.vstack([out[0][:,self.k_sel:].T for out in outs])
+    #     else:
+    #         outs = Parallel(n_jobs=self.n_jobs)(
+    #                 delayed(nnls_OGM)(self.X[chunk,:].T, self.W[:self.k_sel,:].T, returnH=True) for chunk in self.chunk_inds)
+    #         self.H = np.vstack([out[0].T for out in outs])
+    #     # self.H[self.indices, :self.k_sel] = np.eye(self.k_sel)
+    #     # self.H[self.unselected_inds, :self.k_sel] = np.vstack([out[0].T for out in outs])
         
-        assert self.H.shape[0] == self.n
+    #     assert self.H.shape[0] == self.n
 
-        return 
+    #     return 
     
     def swap_move(self, method, j_adap=None, verbose=True):
         if self.G is None: # swap moves we have implemented for gram matrix-enabled only
@@ -279,8 +303,11 @@ class ConvexHullEnergy(Energy):
 
                     # compute the energy with idx_i and idx_j swapped
                     # chunk_inds = np.array_split(unselected_inds_ij, unselected_inds_ij.size//self.chunk_size)
-                    outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(indices_ij, np.concatenate((indices_ij, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((indices_ij, chunk))], returnH=False) for chunk in self.chunk_inds)      
-                    C[i, j] = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs]).sum() 
+                    # outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(indices_ij, np.concatenate((indices_ij, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((indices_ij, chunk))], returnH=False) for chunk in self.chunk_inds)      
+                    # C[i, j] = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs]).sum() 
+                    energy, _, _ = self.compute_projection(indices_ij)
+                    C[i,j] = energy
+
 
                     # undo the swap for the next iteration
                     indices_ij[j] = idx_j 
@@ -303,16 +330,19 @@ class ConvexHullEnergy(Energy):
 
                 # we have to recompute the projection to get the H matrix, since we didn't record it for every possible candidate to save on space
                 # chunk_inds = np.array_split(self.unselected_inds, self.unselected_inds.size//self.chunk_size)
-                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
-                # self.H[self.indices, :] = np.eye(self.k)
-                # self.H[self.unselected_inds, :self.k] = np.vstack([out[0].T for out in outs])
-                self.H = np.vstack([out[0][:,self.k:].T for out in outs])
-
-                # update the dists and energy values now that we've swapped
-                self.dists = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs])
-                assert self.dists.size == self.n
-                self.energy = self.dists.sum()
+                # outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
+                # self.H = np.vstack([out[0][:,self.k:].T for out in outs])
+                energy, dists, H = self.compute_projection(self.indices, returnH=True)
+                self.H = H 
+                self.dists = dists 
+                self.energy = energy
                 self.energy_values.append(self.energy)
+
+                # # update the dists and energy values now that we've swapped
+                # self.dists = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs])
+                # assert self.dists.size == self.n
+                # self.energy = self.dists.sum()
+                # self.energy_values.append(self.energy)
         
             else:
                 continue_swap = False
@@ -324,8 +354,9 @@ class ConvexHullEnergy(Energy):
             
             indices_wo_jadap = self.indices[:j_adap] + self.indices[j_adap+1:]
             # unselected_inds_wo_jadap = np.concatenate((self.unselected_inds, self.indices[j_adap]))
-            outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(indices_wo_jadap, np.concatenate((indices_wo_jadap, chunk)))], np.arange(self.k-1), G_diag=self.G_diag[np.concatenate((indices_wo_jadap, chunk))], returnH=False) for chunk in self.chunk_inds)
-            dists_wo_jadap = np.concatenate([out[1][self.k-1:]/self.Xfro_norm2 for out in outs])
+            # outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(indices_wo_jadap, np.concatenate((indices_wo_jadap, chunk)))], np.arange(self.k-1), G_diag=self.G_diag[np.concatenate((indices_wo_jadap, chunk))], returnH=False) for chunk in self.chunk_inds)
+            # dists_wo_jadap = np.concatenate([out[1][self.k-1:]/self.Xfro_norm2 for out in outs])
+            energy_wo_jadap, dists_wo_jadap, _ = self.compute_projection(indices_wo_jadap)
             assert dists_wo_jadap.size == self.n
             
             if method == "greedy": # arbitrarily choose a point that is the max distance
@@ -344,10 +375,15 @@ class ConvexHullEnergy(Energy):
             # update object and corresponding energy
             self.indices[j_adap] = idx_j_new
             self.unselected_inds = np.delete(np.arange(self.n), self.indices)
-            outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
-            self.H = np.vstack([out[0][:,self.k:].T for out in outs])
-            self.dists = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs])
-            self.energy = self.dists.sum()
+            # outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(self.indices, np.concatenate((self.indices, chunk)))], np.arange(self.k), G_diag=self.G_diag[np.concatenate((self.indices, chunk))], returnH=True) for chunk in self.chunk_inds)
+            # self.H = np.vstack([out[0][:,self.k:].T for out in outs])
+            # self.dists = np.concatenate([out[1][self.k:]/self.Xfro_norm2 for out in outs])
+            # self.energy = self.dists.sum()
+            # self.energy_values.append(self.energy)
+            energy, dists, H = self.compute_projection(self.indices, returnH=True)
+            self.H = H
+            self.dists = dists 
+            self.energy = energy 
             self.energy_values.append(self.energy)
 
         else:

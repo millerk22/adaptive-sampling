@@ -92,11 +92,9 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
             else:
                 candidate_inds = np.delete(np.arange(Energy.n), Energy.indices)
             
-            results_dict = Energy.look_ahead(candidate_inds)
-            energy_vals = np.array([results_dict[c]['energy'] for c in results_dict])
-            sample_id  = candidate_inds[np.argmin(energy_vals)]
-            Energy.update_from_look_ahead(sample_id, results_dict[sample_id])
-            del results_dict
+            candidate_energy_vals = Energy.look_ahead(candidate_inds)
+            sample_id  = candidate_inds[np.argmin(candidate_energy_vals)]
+            Energy.add(sample_id)
             
         else:
             raise ValueError(f"Method {method} not recognized...")
