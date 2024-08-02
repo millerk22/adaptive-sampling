@@ -187,39 +187,73 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=1000, lam=1.0, H0=None, returnH=True, ver
 
 
 
-def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False):
+def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=0, X=None, hull=True):
     """
     G_S = |S_ind| x n  numpy array Gram submatrix
     """
+    if term_cond == 1:
+        assert X is not None 
+
+
     G_SS = G_S[:,S_ind]
     L = np.linalg.norm(G_SS, 2)
-    H = projection_cvxhull(np.linalg.pinv(G_SS)@ G_S)
+    if hull:
+        H = projection_cvxhull(np.linalg.pinv(G_SS)@ G_S)
+    else:
+        H = np.maximum(0.0, np.linalg.pinv(G_SS)@ G_S)
     Z = H.copy()
 
     i = 0
-    eps0 = 0.0
-    eps = 1.0
-
-    while i <= maxiter and eps >= delta*eps0:
+    continue_flag = True
+    if verbose:
+        EPS = []
+    while i <= maxiter and continue_flag:
         Hp = H.copy()
-        H = projection_cvxhull(Z - (G_SS @ Z - G_S)/L)
+        if hull:
+            H = projection_cvxhull(Z - (G_SS @ Z - G_S)/L)
+        else:
+            H = np.maximum(0.0, Z - (G_SS @ Z - G_S)/L)
         lam_ = 0.5*(1. + np.sqrt(1. + 4.*lam**2.))  
         beta = (lam - 1.0)/lam_ 
         Z = H + beta*(H - Hp)
 
-
-        if i == 0:
-            eps0 = np.linalg.norm(H - Hp, 'fro')
-            eps = eps0
-        else:
-            eps = np.linalg.norm(H-Hp, 'fro')
-
         i += 1
         lam = lam_
+        
+
+        if term_cond == 0:
+            if i == 1:
+                eps0 = np.linalg.norm(H - Hp, 'fro')
+                eps = eps0
+            else:
+                eps = np.linalg.norm(H-Hp, 'fro')
+            continue_flag = eps >= delta*eps0
+        elif term_cond == 1:
+            gradient_proj = G_SS @ H - G_S
+            mask = H <= 1e-10
+            gradient_proj[mask] = np.minimum(0.0, gradient_proj[mask])
+            eps = np.linalg.norm(gradient_proj, ord='fro')
+            if i == 1:
+                Mat = H@(H.T @ X[:,S_ind].T - X.T) # don't need to mask out,because we know that W = X[:,S_ind] is non-negative
+                eps0 = np.sqrt(eps**2. + np.linalg.norm(Mat, ord='fro')**2.) 
+            else:
+                
+                if eps < delta*eps0:
+                    if i <= 10:
+                        delta *= 0.1
+                    else:
+                        continue_flag = False 
+        else:
+            raise ValueError(f"term_cond = {term_cond} not recognized...")
+        
+        if verbose:
+            EPS.append(eps)
+         
+            
     energy_vals = G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
     energy_vals[energy_vals < 0] = 0.0
     if verbose:
-        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps }
+        return H, {"energy_vals":energy_vals, "iters":i, "eps":eps, "eps0":eps0, "EPS":EPS }
 
     if returnH:
         return H, energy_vals

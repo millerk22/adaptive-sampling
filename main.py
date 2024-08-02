@@ -16,8 +16,9 @@ from sklearn.datasets import make_blobs
 # overall method string format:   "{ADAPTIVE SAMPLING METHOD}_{SWAP MOVES METHOD}", where there is no underscore nor second method string when no swap moves is applied
 
 # METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
-METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "p-2_greedyla", "passive", "p-1", "p-3", "p-5"]
-
+METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "passive", "p-1", "p-3", "p-5", "p-2_greedyla"]
+# METHODS = ["passive", "p-1", "p-3", "p-5"]
+# METHODS = ["p-2_greedyla"]
 
 def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
             kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100, report_timing=False):
@@ -51,6 +52,8 @@ def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42
             results[method_str]["seeds"].append(seed)
             if energy_type == "cvx":
                 sampler_energy = ConvexHullEnergy(X, k, n_jobs=n_jobs)
+            elif energy_type == "cvxhull":
+                sampler_energy = ConvexHullEnergy(X, k, n_jobs=n_jobs, hull=True)
             elif energy_type == "lpkernel":
                 sampler_energy = LpSubspaceEnergy(X, k, kernel=kernel)
             elif energy_type == "lp":
@@ -65,6 +68,7 @@ def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42
                 init_point = random_state.choice(X.shape[0])
                 other_indices = np.delete(np.arange(X.shape[0]), [init_point])
                 sampler_energy.init_set([init_point] + list(random_state.choice(other_indices, k-1, replace=False)))
+                times = None
             else:
                 # perform the adaptive sampling
                 times = adaptive_sampling(X, k, sampler_energy, method=as_method, seed=seed, p=p_val, num_la_samples=num_la_samples, swap_method=swap_method, report_timing=report_timing)
@@ -143,7 +147,7 @@ def load_dataset(dataset_name):
         raise ValueError(f"Dataset = {dataset_name} not recognized")
     return X
 
-POSSIBLE_ENERGIES = ['kmeans', 'lp', 'lpkernel', 'cvx', 'naive']
+POSSIBLE_ENERGIES = ['kmeans', 'lp', 'lpkernel', 'cvx', 'naive', 'cvxhull']
 POSSIBLE_POLICIES = ['greedy', 'rand']
 POSSIBLE_TASKS = ['kmeans', 'nmf', 'nystrom']
 
@@ -161,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--time", default=0, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
     args = parser.parse_args()
     
-    assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx']
+    assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx', 'cvxhull']
     
     
     # load dataset and run test for the corresponding experiment name

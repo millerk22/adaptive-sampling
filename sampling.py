@@ -108,7 +108,7 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
     if swap_method:
         assert swap_method.split("-")[0] in ["greedyla", "p", "greedy"]
         if max_swaps is None:
-            max_swaps = k**2
+            max_swaps = k**2 //2
         assert max_swaps == int(max_swaps)
 
 
