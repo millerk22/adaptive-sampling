@@ -187,7 +187,7 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=1000, lam=1.0, H0=None, returnH=True, ver
 
 
 
-def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=0, X=None, hull=True):
+def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1, X=None, hull=True):
     """
     G_S = |S_ind| x n  numpy array Gram submatrix
     """
@@ -230,8 +230,11 @@ def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=
             continue_flag = eps >= delta*eps0
         elif term_cond == 1:
             gradient_proj = G_SS @ H - G_S
-            mask = H <= 1e-10
+            mask = H <= 1e-6
             gradient_proj[mask] = np.minimum(0.0, gradient_proj[mask])
+            if hull:
+                mask1 = H >= (1.0 -1e-6)
+                gradient_proj[mask1] = np.maximum(1.0, gradient_proj[mask1])
             eps = np.linalg.norm(gradient_proj, ord='fro')
             if i == 1:
                 Mat = H@(H.T @ X[:,S_ind].T - X.T) # don't need to mask out,because we know that W = X[:,S_ind] is non-negative

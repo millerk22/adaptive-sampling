@@ -136,7 +136,9 @@ class LpSubspaceEnergy(Energy):
 
 CHUNK_SIZE = 750
 
-
+'''
+TODO: Make nnls_ogm_gram a member function so it can have access to self.X for termination condition in conical hull setting.
+'''
 class ConvexHullEnergy(Energy):
     def __init__(self, X, k, n_jobs=4, compute_gram=True, hull=False):
         super().__init__(X, k)
@@ -207,9 +209,9 @@ class ConvexHullEnergy(Energy):
         if self.G is not None:
             k_ = len(inds)
             if parallelize:
-                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH, hull=self.hull) for chunk in self.chunk_inds)
+                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH, hull=self.hull, X=self.X.T) for chunk in self.chunk_inds)
             else:
-                H, energy_vals = nnls_OGM_gram(self.G[inds, :], np.arange(k_), G_diag=self.G_diag, returnH=returnH, hull=self.hull)
+                H, energy_vals = nnls_OGM_gram(self.G[inds, :], np.arange(k_), G_diag=self.G_diag, returnH=returnH, hull=self.hull, X=self.X.T)
         else:
             if not self.hull:
                 raise NotImplementedError("Have not implemented ''hull = False'' for non-gram implementation of OGM")
@@ -403,8 +405,12 @@ class ConvexHullEnergy(Energy):
             else:
                 p = float(method[2:])
                 q_probs = np.power(dists_wo_jadap, p/2.0)  # need to divide p by 2 because the dists are actually squared distances. 
-                q_probs /= q_probs.sum()
-                idx_j_new = np.random.choice(self.n, p=q_probs)
+                if np.isclose(q_probs.sum(), 0.0):
+                    idx_j_new = self.indices[j_adap] # we've gotten the lowest possible energy, so stop swapping
+                    continue_swap = False 
+                else:
+                    q_probs /= q_probs.sum()
+                    idx_j_new = np.random.choice(self.n, p=q_probs)
             
             # update object and corresponding energy
             self.indices[j_adap] = idx_j_new

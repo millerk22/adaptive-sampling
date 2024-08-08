@@ -19,7 +19,23 @@ def run_test(X, W, method, maxiter=500, verbose=True):
         G = X.T @ X
         G_diag = np.diagonal(G)
         G_S = G[W, :]
-        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
+        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True, term_cond=0, hull=True)
+    elif method == "ogmgram1": # in this case the variable W is actually an array of subset indices, not a matrix
+        G = X.T @ X
+        G_diag = np.diagonal(G)
+        G_S = G[W, :]
+        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True, term_cond=1, X=X, hull=True)
+    elif method == "ogmgram2": # in this case the variable W is actually an array of subset indices, not a matrix
+        G = X.T @ X
+        G_diag = np.diagonal(G)
+        G_S = G[W, :]
+        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True, term_cond=1, X=X, hull=False)
+    elif method == "ogmgram3": # in this case the variable W is actually an array of subset indices, not a matrix
+        G = X.T @ X
+        G_diag = np.diagonal(G)
+        G_S = G[W, :]
+        _, info_dict = nnls_OGM_gram(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True, term_cond=0, hull=False)
+    
     elif method == "ogmgramsub": # in this case the variable W is actually an array of subset indices, not a matrix
         G = X.T @ X
         G_diag = np.diagonal(G)
@@ -27,7 +43,12 @@ def run_test(X, W, method, maxiter=500, verbose=True):
         _, info_dict = nnls_OGM_gram_sub(G_S, W, G_diag, delta=1e-3, maxiter=maxiter, lam=1.0,returnH=False, verbose=True)
     else:
         raise NotImplementedError(f"method = '{method}' not recognized...")
-    return info_dict['iters'], info_dict['eps']
+    if 'eps0' not in info_dict:
+        info_dict['eps0'] = None 
+    if 'EPS' not in info_dict:
+        info_dict['EPS'] = None 
+
+    return info_dict['iters'], info_dict['eps'], info_dict['eps0'], info_dict['EPS']
 
 
 def get_data(n, d, k, seed=42, ktrue=None, noise=0.03, hthresh=0.3, return_subset=False):
@@ -67,12 +88,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     
-    Ns = np.logspace(2, 4.5, 11).astype(int)
-    Ds = np.linspace(2, 200, 15).astype(int)
+    Ns = np.logspace(2, 3.5, 3).astype(int)
+    Ds = np.linspace(2, 200, 3).astype(int)
+    # Ns = np.logspace(2, 4.5, 11).astype(int)
+    # Ds = np.linspace(2, 200, 15).astype(int)
     seeds = np.arange(42, 42+args.numseeds)
 
     results = {}
-    for method in ['ogmgram', 'ogmgramsub']:
+    # METHODS = ['ogmgram', 'ogmgramsub']
+    METHODS = ['ogmgram1']
+    #METHODS = ['ogmgram', 'ogmgram1', 'ogmgram2', 'ogmgram3']
+    for method in METHODS:
         print(f"------------ Running Benchmarks for {method} ----------------")
         method_results = defaultdict(dict)
         NDS = list(product(Ns, Ds))
@@ -81,6 +107,8 @@ if __name__ == "__main__":
             #print(f"\tn = {n}, d = {d}, numseeds = {args.numseeds}\n")
             Ks = [k_ for k_ in np.linspace(2, 20, 11).astype(int) if k_ < n]
             seed_by_iters, seed_by_eps = np.zeros((len(seeds), len(Ks))), np.zeros((len(seeds), len(Ks)))
+            seed_by_EPS = np.zeros((len(seeds), len(Ks), args.maxiter+1))
+            seed_by_eps0 = np.zeros((len(seeds), len(Ks)))
             for r, seed in enumerate(seeds):
                 if "gram" in method:
                     X, subset = get_data(n, d, Ks[-1], seed=seed, noise=args.noise, return_subset=True)
@@ -88,11 +116,20 @@ if __name__ == "__main__":
                 else:
                     X, W = get_data(n, d, Ks[-1], seed=seed, noise=args.noise)
                     iters_eps = Parallel(n_jobs=args.njobs)(delayed(run_test)(X, W[:,:k], method, maxiter=args.maxiter, verbose=True) for k in Ks)
-                iters, eps = zip(*iters_eps)
+                iters, eps, eps0, EPS = zip(*iters_eps)
                 seed_by_iters[r,:] = list(iters)
                 seed_by_eps[r,:] = list(eps)
+                if eps0 is not None:
+                    seed_by_eps0[r,:] = list(eps0)
+                if EPS is not None:
+                    for i, l in enumerate(EPS):
+                        seed_by_EPS[r,i,:len(l)] = l
             
-            method_results[d][n] = {'iters':seed_by_iters, 'eps':seed_by_eps}
+            if seed_by_EPS.sum() == 0:
+                seed_by_EPS = None 
+            if seed_by_eps0.sum() == 0:
+                seed_by_eps0 = None 
+            method_results[d][n] = {'iters':seed_by_iters, 'eps':seed_by_eps, 'EPS':seed_by_EPS, 'eps0':seed_by_eps0}
 
         results[method] = method_results
 

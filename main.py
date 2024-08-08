@@ -16,7 +16,8 @@ from sklearn.datasets import make_blobs
 # overall method string format:   "{ADAPTIVE SAMPLING METHOD}_{SWAP MOVES METHOD}", where there is no underscore nor second method string when no swap moves is applied
 
 # METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
-METHODS = ["p-2_p-2", "greedy_greedy", "greedyla", "passive", "p-1", "p-3", "p-5", "p-2_greedyla"]
+# METHODS = [ "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
+METHODS = ["p-2_p-2", "greedy_greedy",  "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
 # METHODS = ["passive", "p-1", "p-3", "p-5"]
 # METHODS = ["p-2_greedyla"]
 
@@ -116,6 +117,21 @@ def load_dataset(dataset_name):
         X = X[mask]
         X = 1.0 * X
         X /= np.max(np.max(X))
+    
+    elif dataset_name == "paviasub":   # HSI dataset
+        X = np.load("./data/pavia.npz")['H']
+        X = np.reshape(X, (X.shape[0]*X.shape[1], X.shape[2]))
+        labels = np.load("./data/pavia.npz")['labels']
+        labels = np.reshape(labels, (labels.shape[0]*labels.shape[1], 1)).flatten()
+        mask = labels != 0
+        X = X[mask]
+        X = 1.0 * X
+        X /= np.max(np.max(X))
+        rstate = np.random.RandomState(42)
+        subset = rstate.choice(X.shape[0], 5000, replace=False)
+        print(X.shape)
+        X = X[subset]
+        print(X.shape)
         
     elif dataset_name == "articles":
         (X, _, _) = joblib.load("../topic-model-tutorial/articles-tfidf.pkl")
@@ -163,6 +179,7 @@ if __name__ == "__main__":
     parser.add_argument("--numlasamples", default=-1, type=int, help="Number of samples to evaluate look ahead greedy method on")
     parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
     parser.add_argument("--time", default=0, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
+    parser.add_argument("--njobs", default=12, type=int, help="Number of CPU cores to utilize in parallelization.")
     args = parser.parse_args()
     
     assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx', 'cvxhull']
@@ -175,7 +192,7 @@ if __name__ == "__main__":
     print(f"------------ Running Test for {args.dataset} ----------------")
     print(f"\tk = {args.k}, numseeds = {args.numseeds}\n")
     # results = run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time)
-    run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time)
+    run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time, n_jobs=args.njobs)
     
     
     # if args.save:
