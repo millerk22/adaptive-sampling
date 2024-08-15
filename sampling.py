@@ -39,18 +39,15 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
         given index and center, X[index] = center.
     """
     assert method in ['greedy', 'p', 'greedyla']
+    assert abs(num_la_samples) > 0 
     n, d = X.shape
-    if num_la_samples < 0:
-        num_la_samples = n
-
-    
+    assert num_la_samples < n 
     random_state = np.random.RandomState(seed)
 
     samples = np.empty((k, d), dtype=X.dtype)
 
     # Pick first center randomly and track index of point
     sample_id = random_state.choice(n, p=p_init)
-    
     # Initialize squared distances
     Energy.add(sample_id)
 
@@ -87,7 +84,7 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
             Energy.add(sample_id)
             
         elif method == 'greedyla':
-            if num_la_samples < n:
+            if num_la_samples > 0:
                 candidate_inds = random_state.choice(np.delete(np.arange(Energy.n), Energy.indices), num_la_samples, replace=False)
             else:
                 candidate_inds = np.delete(np.arange(Energy.n), Energy.indices)

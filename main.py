@@ -17,24 +17,49 @@ from sklearn.datasets import make_blobs
 
 # METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
 # METHODS = [ "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
-METHODS = ["p-2_p-2", "greedy_greedy",  "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
+#METHODS = ["p-2_p-2", "greedy_greedy",  "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
 # METHODS = ["passive", "p-1", "p-3", "p-5"]
 # METHODS = ["p-2_greedyla"]
+METHODS = ["greedyla", "greedy"]
 
 def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42,48),
             kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100, report_timing=False):
     assert type(num_la_samples) in [int, float]
+
+    if args.save:
+        if not os.path.exists(args.resultsdir):
+            os.makedirs(args.resultsdir)
+        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
+        results = None 
+        if os.path.exists(savename):
+            with open(savename, "rb") as f:
+                results = pickle.load(f)
+
     if type(num_la_samples) == float:
         num_la_samples = int(X.shape[0]*num_la_samples)
 
-    
-    results = {s : defaultdict(list) for s in method_strings}
+    if results is None:
+        results = {s : defaultdict(list) for s in method_strings}
+    else:
+        # extend the previously saved results dictionary
+        for method_str in method_strings:
+            if method_str not in results:
+                results[method_str] = defaultdict(list)
+                results[method_str]['energy'] = []
+        
     if sps.issparse(X):
         Xfro_norm2 = sps.linalg.norm(X, ord='fro')**2.
     else:
         Xfro_norm2 = np.linalg.norm(X, ord='fro')**2.
     
     for count, method_str in enumerate(method_strings):
+        try:
+            if len(results[method_str]['energy']) == args.numseeds:
+                if not args.overwrite:
+                    print(f"Already found {method_str} result in {savename}, skipping...")
+                    continue
+        except:
+            print(f"Didn't find 'energy' in keys for {method_str}")
         print(f"Overall Method = {method_str}, {count+1}/{len(method_strings)}")
         if len(method_str.split("_")) == 2:
             as_method, swap_method = method_str.split("_")
@@ -81,9 +106,6 @@ def run_test(args, X, k, energy_type, method_strings=METHODS, seeds=np.arange(42
             if report_timing:
                 results[method_str]["times"].append(times)
         if args.save:
-            if not os.path.exists(args.resultsdir):
-                os.makedirs(args.resultsdir)
-            savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
             print(f"Saving (intermediate) results to file {savename}...")
             with open(savename, 'wb') as rfile:
                 pickle.dump(results, rfile)
@@ -98,6 +120,15 @@ def load_dataset(dataset_name):
         X = np.load("./data/urban.npz")['H'].T
         X = 1.0*X
         X /= np.max(np.max(X))
+    elif dataset_name == "urbansub":
+        X = np.load("./data/urban.npz")['H'].T
+        X = 1.0*X
+        X /= np.max(np.max(X))
+        rstate = np.random.RandomState(42)
+        subset = rstate.choice(X.shape[0], 5000, replace=False)
+        print(X.shape)
+        X = X[subset]
+        print(X.shape)
     elif dataset_name == "salinas": # HSI dataset
         X = np.load("./data/salinasa.npz")['H']
         X = np.reshape(X, (X.shape[0]*X.shape[1], X.shape[2]))
@@ -180,6 +211,7 @@ if __name__ == "__main__":
     parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
     parser.add_argument("--time", default=0, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
     parser.add_argument("--njobs", default=12, type=int, help="Number of CPU cores to utilize in parallelization.")
+    parser.add_argument("--overwrite", default=0, type=int, help="Bool flag (0 or 1) to specify whether or not to redo tests for specified method strings.")
     args = parser.parse_args()
     
     assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx', 'cvxhull']

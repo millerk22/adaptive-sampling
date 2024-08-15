@@ -207,11 +207,13 @@ class ConvexHullEnergy(Energy):
     def compute_projection(self, inds, returnH=False, parallelize=False):
         k_ = 0
         if self.G is not None:
-            k_ = len(inds)
+            
             if parallelize:
+                k_ = len(inds)
                 outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH, hull=self.hull, X=self.X.T) for chunk in self.chunk_inds)
             else:
-                H, energy_vals = nnls_OGM_gram(self.G[inds, :], np.arange(k_), G_diag=self.G_diag, returnH=returnH, hull=self.hull, X=self.X.T)
+                H, energy_vals = nnls_OGM_gram(self.G[inds, :], inds, G_diag=self.G_diag, returnH=returnH, hull=self.hull, X=self.X.T)
+                
         else:
             if not self.hull:
                 raise NotImplementedError("Have not implemented ''hull = False'' for non-gram implementation of OGM")
@@ -249,7 +251,7 @@ class ConvexHullEnergy(Energy):
         outs = Parallel(n_jobs=self.n_jobs)(
             delayed(self.compute_projection)(self.indices + [c]) for c in iterator)
         
-        candidate_energy_vals = np.array(out[0] for out in outs)
+        candidate_energy_vals = np.array([out[0] for out in outs])
         
         # for i, c in iterator:
         #     energy_c, dists_c, _ = self.compute_projection(self.indices)

@@ -230,10 +230,10 @@ def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=
             continue_flag = eps >= delta*eps0
         elif term_cond == 1:
             gradient_proj = G_SS @ H - G_S
-            mask = H <= 1e-6
+            mask = H <= 1e-8
             gradient_proj[mask] = np.minimum(0.0, gradient_proj[mask])
             if hull:
-                mask1 = H >= (1.0 -1e-6)
+                mask1 = H >= (1.0 -1e-8)
                 gradient_proj[mask1] = np.maximum(1.0, gradient_proj[mask1])
             eps = np.linalg.norm(gradient_proj, ord='fro')
             if i == 1:
@@ -251,8 +251,7 @@ def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=
         
         if verbose:
             EPS.append(eps)
-         
-            
+    
     energy_vals = G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
     energy_vals[energy_vals < 0] = 0.0
     if verbose:
