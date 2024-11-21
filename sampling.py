@@ -138,3 +138,50 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
     
     return 
 
+
+
+
+def perform_swaps_for_all(X, kstart, indices, swap_method,report_timing=False, verbose=True):
+    assert kstart <= len(indices)
+    assert swap_method.split("-")[0] in ["greedyla", "p", "greedy"]
+
+    print(f"------ Performing swap moves on each k = [{kstart}, {len(indices)}] ---------")
+    energy = []
+    indices_k = []
+    times_all = []
+    for k in range(len(indices)):
+        if k < kstart:
+            energy.append(-1.0)
+            indices_k.append(indices)
+            times_all.append([])
+            continue
+        print(f"k = {k},   {k-kstart+1}/{len(indices)-kstart}")
+        Energy = ConvexHullEnergy(X, k)
+        Energy.init_set(indices[:k])
+        times = []
+
+        for u in range(max(k**2 //2, 5)):
+            if report_timing:
+                t0 = perf_counter()
+            swap_flag = Energy.swap_move(swap_method, j_adap=u % k, verbose=verbose)
+            if report_timing:
+                t1 = perf_counter()
+                times.append(t1-t0)
+            # termination check for the different cases
+            if swap_method == "greedy":
+                if not swap_flag:
+                    no_change_count += 1
+                else:
+                    no_change_count = 0
+                if no_change_count == k:
+                    break
+            else: # adaptive swaps with p < \infty (not "greedy") always return swap_flag = True, so this just handles the greedyla termination condition
+                if not swap_flag:
+                    break
+
+        energy.append(Energy.energy)
+        indices_k.append(Energy.indices)
+        times_all.append(times)
+
+    return energy, indices_k, times_all
+

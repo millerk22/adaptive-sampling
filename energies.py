@@ -156,6 +156,7 @@ class ConvexHullEnergy(Energy):
         self.chunk_size = min(CHUNK_SIZE, self.n / 2)
         self.chunk_inds = np.array_split(np.arange(self.n), self.n//self.chunk_size)
         self.hull = hull
+        self.use_previous = True
         self.G = None
         if compute_gram:
             self.G = X @ X.T
@@ -206,13 +207,19 @@ class ConvexHullEnergy(Energy):
 
     def compute_projection(self, inds, returnH=False, parallelize=False):
         k_ = 0
+        H0 = None 
+        if self.use_previous:
+            if self.k_sel > 1:
+                H0 = np.zeros((self.H.shape[0]+1, self.H.shape[1]))
+                H0[:-1,:] = self.H.copy()
+
         if self.G is not None:
             
             if parallelize:
                 k_ = len(inds)
-                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH, hull=self.hull, X=self.X.T) for chunk in self.chunk_inds)
+                outs = Parallel(n_jobs=self.n_jobs)(delayed(nnls_OGM_gram)(self.G[np.ix_(inds, np.concatenate((inds, chunk)))], np.arange(k_), G_diag=self.G_diag[np.concatenate((inds, chunk))], returnH=returnH, hull=self.hull, X=self.X.T, H0=H0[:,chunk]) for chunk in self.chunk_inds)
             else:
-                H, energy_vals = nnls_OGM_gram(self.G[inds, :], inds, G_diag=self.G_diag, returnH=returnH, hull=self.hull, X=self.X.T)
+                H, energy_vals = nnls_OGM_gram(self.G[inds, :], inds, G_diag=self.G_diag, returnH=returnH, hull=self.hull, X=self.X.T, H0=H0)
                 
         else:
             if not self.hull:

@@ -187,7 +187,7 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=1000, lam=1.0, H0=None, returnH=True, ver
 
 
 
-def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1, X=None, hull=True):
+def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1, X=None, hull=True, H0=None):
     """
     G_S = |S_ind| x n  numpy array Gram submatrix
     """
@@ -197,10 +197,17 @@ def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=
 
     G_SS = G_S[:,S_ind]
     L = np.linalg.norm(G_SS, 2)
-    if hull:
-        H = projection_cvxhull(np.linalg.pinv(G_SS)@ G_S)
+    
+    if H0 is None:
+        H0 = np.linalg.pinv(G_SS)@ G_S
+
+        if hull:
+            H = projection_cvxhull()
+        else:
+            H = np.maximum(0.0, np.linalg.pinv(G_SS)@ G_S)
     else:
-        H = np.maximum(0.0, np.linalg.pinv(G_SS)@ G_S)
+        H = H0.copy()
+
     Z = H.copy()
 
     i = 0
