@@ -192,9 +192,14 @@ class ConvexHullEnergy(Energy):
         if term_cond == 1:
             assert self.X is not None 
 
-        G_S = self.G_S[:self.k_sel,:] # make copy since will be using often
+        if self.k_sel == 0:
+            G_S = self.X[S_ind,:] @ self.X.T
+        else:
+            G_S = self.G_S[:len(S_ind),:] # make copy since will be using often
         G_SS = G_S[:,S_ind]
+
         L = np.linalg.norm(G_SS, 2)
+        
         
         if H0 is None:
             H = np.maximum(0.0, np.linalg.pinv(G_SS)@ G_S)
