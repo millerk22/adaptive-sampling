@@ -187,7 +187,7 @@ def nnls_OGM(X, W, delta=1e-3, maxiter=1000, lam=1.0, H0=None, returnH=True, ver
 
 
 
-def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1, X=None, hull=True, H0=None):
+def nnls_OGM_gram(G_S, S_ind, G_diag, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1, X=None, hull=False, H0=None):
     """
     G_S = |S_ind| x n  numpy array Gram submatrix
     """

@@ -1,0 +1,24 @@
+dataset: salinas
+k: 10
+k_oversample: 50
+energy: cvx
+time: 1
+numseeds: 10
+numlasamples: -1
+
+methods:
+  - passive
+  - p-2
+  - p-1
+  - p-5
+  - greedy
+  - greedyla
+
+oversample:
+  - passive
+  - p-2
+  - p-1
+  - p-5
+  - greedy
+
+

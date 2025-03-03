@@ -16,7 +16,7 @@ from sklearn.datasets import make_blobs
 
 # overall method string format:   "{ADAPTIVE SAMPLING METHOD}_{SWAP MOVES METHOD}", where there is no underscore nor second method string when no swap moves is applied
 
-METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
+METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5", "greedyla"]
 # METHODS = [ "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
 # METHODS = ["p-2_p-2", "greedy_greedy",  "passive", "p-1", "p-3", "p-5",  "greedyla", "p-2_greedyla"]
 # METHODS = ["passive", "p-1", "p-3", "p-5"]
@@ -24,7 +24,8 @@ METHODS = ["passive", "p-2", "greedy", "p-1", "p-3", "p-5"]
 # METHODS = ["greedyla", "greedy"]
 
 def run_test(args, X, k, energy_type, method_strings, seeds=np.arange(42,48),
-            kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100, report_timing=False, overwrite=[]):
+            kernel=partial(rbf_kernel, gamma=0.1), n_jobs=12, num_la_samples=100, report_timing=False, overwrite=[],
+            oversample=[], k_os=50):
     assert type(num_la_samples) in [int, float]
 
     if args.save:
@@ -66,6 +67,7 @@ def run_test(args, X, k, energy_type, method_strings, seeds=np.arange(42,48),
 
     print("Already found results for: ", ", ".join(already_done))
     print("(Re-)Computing results for: ", ", ".join(methods_to_do))
+    print(f"\toversample methods = {oversample}")
     print("="*20)
     print()
 
@@ -96,21 +98,24 @@ def run_test(args, X, k, energy_type, method_strings, seeds=np.arange(42,48),
         else:
             as_method_str = as_method
         
-        
-        for i, seed in tqdm(enumerate(seeds)):
+        if as_method_str in oversample: # if this adaptive sampling method is designated to be oversampled, set the value of k accordingly
+            k_todo = k_os 
+        else:
+            k_todo = k
+        print(as_method, as_method_str, k_todo)
+
+        for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
             results[method_str]["seeds"].append(seed)
 
             if swap_method is None:
                 if energy_type == "cvx":
-                    sampler_energy = ConvexHullEnergy(X, k, n_jobs=n_jobs)
-                elif energy_type == "cvxhull":
-                    sampler_energy = ConvexHullEnergy(X, k, n_jobs=n_jobs, hull=True)
+                    sampler_energy = ConvexHullEnergy(X, k_todo, n_jobs=n_jobs)
                 elif energy_type == "lpkernel":
-                    sampler_energy = LpSubspaceEnergy(X, k, kernel=kernel)
+                    sampler_energy = LpSubspaceEnergy(X, k_todo, kernel=kernel)
                 elif energy_type == "lp":
-                    sampler_energy = LpSubspaceEnergy(X, k, kernel=None)
+                    sampler_energy = LpSubspaceEnergy(X, k_todo, kernel=None)
                 elif energy_type == "kmeans":
-                    sampler_energy = KmeansEnergy(X, k)
+                    sampler_energy = KmeansEnergy(X, k_todo)
                 else:
                     print(f"Energy type = {energy_type} not recognized, skipping")
                     break
@@ -118,11 +123,11 @@ def run_test(args, X, k, energy_type, method_strings, seeds=np.arange(42,48),
                     random_state = np.random.RandomState(seed)
                     init_point = random_state.choice(X.shape[0])
                     other_indices = np.delete(np.arange(X.shape[0]), [init_point])
-                    sampler_energy.init_set([init_point] + list(random_state.choice(other_indices, k-1, replace=False)))
+                    sampler_energy.init_set([init_point] + list(random_state.choice(other_indices, k_todo-1, replace=False)))
                     times = None
                 else:
                     # perform the adaptive sampling
-                    times = adaptive_sampling(X, k, sampler_energy, method=as_method, seed=seed, p=p_val, num_la_samples=num_la_samples, swap_method=swap_method, report_timing=report_timing)
+                    times = adaptive_sampling(X, k_todo, sampler_energy, method=as_method, seed=seed, p=p_val, num_la_samples=num_la_samples, swap_method=swap_method, report_timing=report_timing)
 
 
                 results[method_str]["indices"].append(sampler_energy.indices)
@@ -150,7 +155,11 @@ def run_test(args, X, k, energy_type, method_strings, seeds=np.arange(42,48),
 
 
 def load_dataset(dataset_name):
-    if dataset_name == "blobs":
+    if dataset_name == "blobssmallest":
+        X, _ = make_blobs(5*[50], n_features=200, cluster_std=0.1)
+    elif dataset_name == "blobssmall":
+        X, _ = make_blobs(5*[100], n_features=200, cluster_std=0.1)
+    elif dataset_name == "blobs":
         X, _ = make_blobs(5*[500], n_features=200, cluster_std=0.1)
     elif dataset_name == "urban":
         X = np.load("./data/urban.npz")['H'].T
@@ -161,7 +170,7 @@ def load_dataset(dataset_name):
         X = 1.0*X
         X /= np.max(np.max(X))
         rstate = np.random.RandomState(42)
-        subset = rstate.choice(X.shape[0], 5000, replace=False)
+        subset = rstate.choice(X.shape[0], 7500, replace=False)
         print(X.shape)
         X = X[subset]
         print(X.shape)
@@ -230,7 +239,7 @@ def load_dataset(dataset_name):
         raise ValueError(f"Dataset = {dataset_name} not recognized")
     return X
 
-POSSIBLE_ENERGIES = ['kmeans', 'lp', 'lpkernel', 'cvx', 'naive', 'cvxhull']
+POSSIBLE_ENERGIES = ['kmeans', 'lp', 'lpkernel', 'cvx', 'naive']
 POSSIBLE_POLICIES = ['greedy', 'rand']
 POSSIBLE_TASKS = ['kmeans', 'nmf', 'nystrom']
 
@@ -239,6 +248,7 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Main file for running adaptive sampling tests.")
     parser.add_argument("--dataset", default="blobs", help="Name of dataset, referenced in get_dataset function")
     parser.add_argument("--k", default=5, type=int, help="Number of samples to select")
+    parser.add_argument("--k_oversample", default=50, type=int, help="Number of samples to select via oversampling")
     parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
     parser.add_argument("--save", default=1, type=int, help="Boolean (i.e., integer 1 or 0) of whether or not to save the results to file.")
     parser.add_argument("--energy", default="cvx", help="String name of the evaluation energy type; one of ['kmeans', 'lp', 'lpkernel', 'cvx']")
@@ -251,9 +261,7 @@ if __name__ == "__main__":
     parser.add_argument("--kstart", default=2, type=int, help="Start value of k to perform swap moves.")
     #parser.add_argument("--overwrite", default=0, type=int, help="Bool flag (0 or 1) to specify whether or not to redo tests for specified method strings.")
     args = parser.parse_args()
-    
-    assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx', 'cvxhull']
-    
+
     if args.config == "":
         config_methods = METHODS
         overwrite_methods = []
@@ -261,13 +269,33 @@ if __name__ == "__main__":
         assert os.path.exists(args.config)
         with open(args.config,"r") as file:
             config = yaml.safe_load(file)
-            assert 'methods' in config 
-            config_methods = sorted(config['methods']) 
-            if 'overwrite' in config:
-                overwrite_methods = sorted(config['overwrite'])
-            else:
-                overwrite_methods = []
-        
+        assert 'methods' in config 
+        config_methods = sorted(config['methods']) 
+        if 'overwrite' in config:
+            overwrite_methods = sorted(config['overwrite'])
+        else:
+            overwrite_methods = []
+        if 'oversample' in config:
+            oversample_methods = sorted(config['oversample'])
+        else:
+            oversample_methods = []
+        if 'k' in config:
+            args.k = config['k']
+        if 'k_oversample' in config:
+            args.k_oversample = config['k_oversample']
+        if 'dataset' in config:
+            args.dataset = config['dataset']
+        if 'energy' in config:
+            args.energy = config['energy']
+        if 'time' in config:
+            args.time = int(config['time'])
+        if 'numseeds' in config:
+            args.numseeds = config['numseeds']
+        if 'numlasamples' in config:
+            args.numlasamples = config['numlasamples']
+
+    
+    assert args.energy in ['kmeans', 'lp', 'lpkernel', 'cvx']
 
     to_add = [] 
     for method in config_methods:
@@ -289,7 +317,9 @@ if __name__ == "__main__":
     
     # run the test
     print(f"------------ Running Test for {args.dataset} ----------------")
-    print(f"\tk = {args.k}, numseeds = {args.numseeds}\n")
+    print(f"\tn = {X.shape[0]}, k = {args.k}, k_oversample = {args.k_oversample}, numseeds = {args.numseeds}")
     # results = run_test(args, X, args.k, args.energy, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time)
-    run_test(args, X, args.k, args.energy, method_strings=config_methods, seeds=np.arange(42, 42+args.numseeds), num_la_samples=args.numlasamples, report_timing=args.time, n_jobs=args.njobs, overwrite=overwrite_methods)
+    run_test(args, X, args.k, args.energy, method_strings=config_methods, seeds=np.arange(42, 42+args.numseeds), \
+             num_la_samples=args.numlasamples, report_timing=args.time, n_jobs=args.njobs, overwrite=overwrite_methods, \
+                oversample=oversample_methods, k_os=args.k_oversample)
     

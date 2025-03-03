@@ -46,14 +46,9 @@ def adaptive_sampling(X, k, Energy, p_init=None, seed=42, method='greedy', p=2.0
 
     samples = np.empty((k, d), dtype=X.dtype)
 
-    # Pick first center randomly and track index of point
-    sample_id = random_state.choice(n, p=p_init)
-    # Initialize squared distances
-    Energy.add(sample_id)
-
-    # Pick the remaining k-1 points
+    # Pick the k points
     times = []
-    for c in range(1, k):
+    for c in range(k):
         # make sure Energy.dists and Energy.energy are non-negative
         Energy.dists[Energy.dists <= 0] = 0.0
         Energy.energy = Energy.dists.sum()
