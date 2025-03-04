@@ -141,6 +141,7 @@ TODO: Make nnls_ogm_gram a member function so it can have access to self.X for t
 class ConvexHullEnergy(Energy):
     def __init__(self, X, k, n_jobs=4, compute_gram=True, hull=False):
         super().__init__(X, k)
+        assert self.X.min() >= -1e-13 # ensure non-negativity
         self.sparse_flag = sps.issparse(self.X)
         self.W = np.zeros((self.k, self.d))
         self.H = np.zeros((self.k, self.n))
@@ -236,7 +237,7 @@ class ConvexHullEnergy(Energy):
                 gradient_proj[mask] = np.minimum(0.0, gradient_proj[mask])
                 eps = np.linalg.norm(gradient_proj, ord='fro')
                 if i == 1:
-                    Mat = H@(H.T @ self.X[S_ind,:] - self.X) # don't need to mask out,because we know that W = X[:,S_ind] is non-negative
+                    Mat = H@(H.T @ self.X[S_ind,:] - self.X) # don't need to mask out,because we know that W = X[S_ind,:] is non-negative
                     eps0 = np.sqrt(eps**2. + np.linalg.norm(Mat, ord='fro')**2.) 
                 else:
                     

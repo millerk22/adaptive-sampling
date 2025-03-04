@@ -235,6 +235,7 @@ def load_dataset(dataset_name):
         N = rand_state_.randn(d, n)*noise
         X = Wtrue @ Htrue + N
         X = X.T
+        X[X <= 0.0] = 0.0
     else:
         raise ValueError(f"Dataset = {dataset_name} not recognized")
     return X
