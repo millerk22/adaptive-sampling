@@ -31,7 +31,7 @@ class AdaptiveSampling(Sampler):
             if self.report_timing:
                 tic = perf_counter()
             if self.Energy.p is not None:
-                q = self.Energy.dists / self.Energy.energy
+                q = self.Energy.dists / self.Energy.dists.sum()
                 idx = self.random_state.choice(range(self.Energy.n), p=q)
             else:
                 # adaptive sampling with p = infty
@@ -56,12 +56,18 @@ class AdaptiveSearch(Sampler):
     
     def build(self, k):
         for i in range(k):
+            if self.report_timing:
+                tic = perf_counter()
             # compute the look-ahead energies for all the non-included points
             q_look_aheads_p = self.Energy.look_ahead() # includes the power p in the computation in self.Energy
 
             # arbitratily choose the minimizer of the look_aheads 
             min_idxs = np.where(q_look_aheads_p == np.min(q_look_aheads_p))[0]
             idx = self.random_state.choice(min_idxs)
+
+            if self.report_timing:
+                toc = perf_counter()
+                self.times.append(toc-tic)
 
             # update distances and add point to index set
             self.Energy.add(idx)

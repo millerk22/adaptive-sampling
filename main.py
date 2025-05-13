@@ -27,7 +27,7 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
     if args.save:
         if not os.path.exists(args.resultsdir):
             os.makedirs(args.resultsdir)
-        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "p_" + str(p) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
+        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_p" + str(p) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
         results = None 
         if os.path.exists(savename):
             with open(savename, "rb") as f:
@@ -62,7 +62,7 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
 
     print("Already found results for: ", ", ".join(already_done))
     print("(Re-)Computing results for: ", ", ".join(methods_to_do))
-    print(f"\toversample methods = {oversample}")
+    print(f"\toversample methods = {OVERSAMPLE_METHODS}")
     print("="*20)
     print()
     
@@ -71,7 +71,7 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
             print(f"Already found {method_str} result in {savename}, skipping...")
             continue
 
-        print(f"Overall Method = {method_str}, {count+1}/{len(METHODS)}")
+        print(f"Overall Method = {method_str}, {count+1}/{len(methods_to_do)}")
         if len(method_str.split("_")) == 2:
             build_method, swap_method = method_str.split("_")
         else:
@@ -250,9 +250,11 @@ if __name__ == "__main__":
     parser.add_argument("--ntest", default=500, type=int, help="Size of 'test' dataset for timing comparisons.")
     args = parser.parse_args()
 
-    if args.config == "":
-        overwrite_methods = [] 
-    else:
+    
+    overwrite_methods = [] 
+    args.powers = [1, 2, None]
+
+    if args.config != "":
         assert os.path.exists(args.config)
         with open(args.config,"r") as file:
             config = yaml.safe_load(file)

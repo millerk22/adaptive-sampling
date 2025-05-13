@@ -38,10 +38,8 @@ class EnergyClass(object):
         return
 
 
-########## PROBLEM WITH THE DIMENSIONS OF X
-
 class ConicHullEnergy(EnergyClass):
-    def __init__(self, X, k, p=2, n_jobs=4):
+    def __init__(self, X, k, p=2, n_jobs=4, verbose=False):
         super().__init__(X, k, p=p)
         assert self.X.min() >= -1e-13 # ensure non-negativity
         self.sparse_flag = sps.issparse(self.X)
@@ -60,6 +58,7 @@ class ConicHullEnergy(EnergyClass):
         self.use_previous = True
         self.G_diag = self.dists**2.
         self.G_S = np.zeros((self.k, self.n)) 
+        self.verbose = verbose
     
     def convert_dists_to_p(self):
         if self.p is not None:
@@ -99,11 +98,11 @@ class ConicHullEnergy(EnergyClass):
         
         return self.nnls_OGM_gram(inds, la_ind=la_ind, returnH=returnH, H0=H0)
 
-    def look_ahead(self, candidates=None, verbose=False):
+    def look_ahead(self, candidates=None):
         if candidates is None:
             candidates = self.unselected_inds
 
-        if verbose:
+        if self.verbose:
             iterator = tqdm(candidates, total=len(candidates))
             iterator.set_description("Computing conic hull look-ahead values...")
         else:
