@@ -1,4 +1,6 @@
 # adaptive-sampling
+
+## NEED TO UPDATE README
 Code for adaptive sampling framework.
 
 See ``requirements.txt`` file for some necessary packages for running this code.
