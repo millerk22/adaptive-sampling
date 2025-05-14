@@ -54,7 +54,87 @@ def find_methods_to_do(args, p, overwrite=[]):
 
     return already_done, methods_to_do, savename, results
 
+"""
+Need to have the experiments run build phase and swap phase separately, since for swap methods we will be 
+    figuring out the swaps for each 1<= i <= k, not just always doing the k build and then swaps.
+"""
 
+def run_experiment_new(X, p, method_str, results, seeds, args):
+    if len(method_str.split("_")) == 2:
+        build_method, swap_method = method_str.split("_")
+    else:
+        build_method = method_str
+        swap_method = None
+    
+    # if this build method is designated to be oversampled, set the value of k accordingly
+    if build_method in OVERSAMPLE_METHODS: 
+        k_todo = args.k_oversample 
+    else:
+        k_todo = args.k
+
+    for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
+        results[method_str]["seeds"].append(seed)
+
+        if swap_method is None:
+            # Instantiate an Energy object for this test
+            if args.energy == "conic":
+                Energy = ConicHullEnergy(X, k_todo, p=p, n_jobs=args.njobs)
+            else:
+                print(f"Energy type = {args.energy} not recognized, skipping")
+                break
+            
+            # Perform the build function for this run
+            if build_method == "uniform":
+                # uniform can be done all at once
+                random_state = np.random.RandomState(seed)
+                Energy.init_set(list(random_state.choice(Energy.n, k_todo, replace=False)))
+                if args.time:
+                    results[method_str]["times"].append(k_todo*[None])
+            else:
+                sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
+                sampler.build(method=build_method)
+                if args.time:
+                    results[method_str]["times"].append(sampler.times)
+
+            results[method_str]["indices"].append(Energy.indices)
+            results[method_str]["energy"].append(Energy.energy)
+            results[method_str]["energy_values"].append(Energy.energy_values)
+            
+        else:
+            # if we have a swap_method string, then we will read in previously done build moves to 
+            # avoid recomputing...
+            all_build_inds = results[build_method]["indices"][i] # get the previously computed indices from the non-swap moves method
+                                                                # should have because of check done in main part of script
+
+            for k_ in range(1, args.k+1):
+                # Instantiate an Energy object for this test
+                if args.energy == "conic":
+                    Energy = ConicHullEnergy(X, k_, p=p, n_jobs=args.njobs)
+                else:
+                    print(f"Energy type = {args.energy} not recognized, skipping")
+                    break
+
+                # initialize with k_ points, will do swaps from here
+                Energy.init_set(all_build_inds[:k_])
+
+                # instantiate adaptive sampler
+                sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
+                sampler.swap_phase(method=swap_method, max_swaps=k_**2)
+
+                results[method_str]["indices"].append(Energy.indices)
+                results[method_str]["energy"].append(Energy.energy)
+                results[method_str]["energy_values"].append(Energy.energy_values)
+                if args.time:
+                    # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
+                    results[method_str]["times"].append(sampler.times)
+                    
+    return results 
+
+
+
+
+
+# current, not implemented for swaps
 
 def run_experiment(X, p, method_str, results, seeds, args):
     if len(method_str.split("_")) == 2:
@@ -63,7 +143,8 @@ def run_experiment(X, p, method_str, results, seeds, args):
         build_method = method_str
         swap_method = None
     
-    if build_method in OVERSAMPLE_METHODS: # if this build method is designated to be oversampled, set the value of k accordingly
+    # if this build method is designated to be oversampled, set the value of k accordingly
+    if build_method in OVERSAMPLE_METHODS: 
         k_todo = args.k_oversample 
     else:
         k_todo = args.k

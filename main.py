@@ -39,7 +39,7 @@ def run_experiments_p(args, X, p, seeds=np.arange(42,48), overwrite=[]):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Main file for running adaptive sampling tests.")
-    parser.add_argument("--dataset", default="blobs", help="Name of dataset, referenced in get_dataset function")
+    parser.add_argument("--dataset", default="test", help="Name of dataset, referenced in get_dataset function")
     parser.add_argument("--k", default=10, type=int, help="Number of samples to select")
     parser.add_argument("--k_oversample", default=50, type=int, help="Number of samples to select via oversampling")
     parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
@@ -55,8 +55,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     
-    overwrite_methods = [] 
+    overwrite_methods = []
     args.powers = [1, 2, None]
+
+    if args.dataset == "test":
+        overwrite_methods = ['search'] 
 
     # check config file
     if args.config != "":

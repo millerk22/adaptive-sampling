@@ -10,7 +10,7 @@ from scipy.optimize import nnls
 IMPLEMENTED_ENERGIES = ['conic']
 
 class EnergyClass(object):
-    def __init__(self, X, k, p=2, n_jobs=None):
+    def __init__(self, X, k, p=2):
         self.X = X
         self.k = k
         self.p = p
@@ -20,7 +20,6 @@ class EnergyClass(object):
         self.indices = []
         self.dists = np.ones(self.n)
         self.energy_values = []
-        self.n_jobs = n_jobs
         if sps.issparse(X):
             self.Xfro_norm2 = sps.linalg.norm(self.X, ord='fro')**2.
         else:
@@ -89,6 +88,7 @@ class ConicHullEnergy(EnergyClass):
         self.G_diag = self.dists**2.
         self.G_S = np.zeros((self.k, self.n)) 
         self.verbose = verbose
+        self.n_jobs = n_jobs
     
         
     def add(self, i):
@@ -126,8 +126,9 @@ class ConicHullEnergy(EnergyClass):
         
         if self.n_jobs is not None:
             with parallel_backend("loky", inner_max_num_threads=1):
-                search_dists = Parallel(n_jobs=self.n_jobs)(
-                    delayed(self.nnls_OGM_gram)(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator)
+                outs = Parallel(n_jobs=self.n_jobs)(
+                    delayed(self.nnls_OGM_gram)(search_ind=c, idx_to_swap=idx_to_swap, returnH=False) for c in iterator)
+                search_dists = [out[0] for out in outs]
         else:
             search_dists = [self.nnls_OGM_gram(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator]
         
