@@ -7,8 +7,7 @@ from collections import defaultdict
 from energies import *
 from sampling import *
 
-ALL_METHODS = ["search", "sampling", "uniform"] #, "search_search", "sampling_search", "sampling_sampling", "search_sampling"]  
-METHODS = ALL_METHODS #[:-1]
+METHODS = ["search", "sampling", "uniform", "search_search", "sampling_search", "sampling_sampling"]  
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -54,12 +53,13 @@ def find_methods_to_do(args, p, overwrite=[]):
 
     return already_done, methods_to_do, savename, results
 
+
 """
 Need to have the experiments run build phase and swap phase separately, since for swap methods we will be 
     figuring out the swaps for each 1<= i <= k, not just always doing the k build and then swaps.
 """
 
-def run_experiment_new(X, p, method_str, results, seeds, args):
+def run_experiment(X, p, method_str, results, seeds, args):
     if len(method_str.split("_")) == 2:
         build_method, swap_method = method_str.split("_")
     else:
@@ -92,7 +92,7 @@ def run_experiment_new(X, p, method_str, results, seeds, args):
                     results[method_str]["times"].append(k_todo*[None])
             else:
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                sampler.build(method=build_method)
+                sampler.build_phase(method=build_method)
                 if args.time:
                     results[method_str]["times"].append(sampler.times)
 
@@ -106,6 +106,10 @@ def run_experiment_new(X, p, method_str, results, seeds, args):
             all_build_inds = results[build_method]["indices"][i] # get the previously computed indices from the non-swap moves method
                                                                 # should have because of check done in main part of script
 
+            indices_swap = []
+            energy_swap = []
+            energy_values_swap = []
+            times_swap = []
             for k_ in range(1, args.k+1):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
@@ -121,22 +125,28 @@ def run_experiment_new(X, p, method_str, results, seeds, args):
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
                 sampler.swap_phase(method=swap_method, max_swaps=k_**2)
 
-                results[method_str]["indices"].append(Energy.indices)
-                results[method_str]["energy"].append(Energy.energy)
-                results[method_str]["energy_values"].append(Energy.energy_values)
+                indices_swap.append(Energy.indices)
+                energy_swap.append(Energy.energy)
+                energy_values_swap.append(Energy.energy_values)
                 if args.time:
-                    # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
-                    results[method_str]["times"].append(sampler.times)
-                    
+                    times_swap.append(sampler.times)
+
+            results[method_str]["indices"].append(indices_swap)
+            results[method_str]["energy"].append(energy_swap)
+            results[method_str]["energy_values"].append(energy_values_swap)
+            if args.time:
+                # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
+                results[method_str]["times"].append(times_swap)
+
     return results 
 
 
 
 
 
-# current, not implemented for swaps
+# old, not implemented for swaps
 
-def run_experiment(X, p, method_str, results, seeds, args):
+def run_experiment_old(X, p, method_str, results, seeds, args):
     if len(method_str.split("_")) == 2:
         build_method, swap_method = method_str.split("_")
     else:

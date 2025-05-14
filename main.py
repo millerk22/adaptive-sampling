@@ -15,7 +15,8 @@ def run_experiments_p(args, X, p, seeds=np.arange(42,48), overwrite=[]):
     
     print("Already found results for: ", ", ".join(already_done))
     print("(Re-)Computing results for: ", ", ".join(methods_to_do))
-    print(f"\toversample methods = {OVERSAMPLE_METHODS}")
+    print("\tOversample methods: ", ", ".join(OVERSAMPLE_METHODS))
+    print("\tOverwrite methods: ", ", ".join(overwrite))
     print("="*40)
     
     for count, method_str in enumerate(methods_to_do):
@@ -59,7 +60,8 @@ if __name__ == "__main__":
     args.powers = [1, 2, None]
 
     if args.dataset == "test":
-        overwrite_methods = ['search'] 
+        overwrite_methods = [] 
+        args.powers = [2, None]
 
     # check config file
     if args.config != "":
