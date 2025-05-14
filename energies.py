@@ -7,6 +7,8 @@ from tqdm import tqdm
 
 from scipy.optimize import nnls
 
+IMPLEMENTED_ENERGIES = ['conic']
+
 class EnergyClass(object):
     def __init__(self, X, k, p=2, n_jobs=None):
         self.X = X
@@ -54,13 +56,13 @@ class EnergyClass(object):
         if idx_to_swap is not None:
             assert (idx_to_swap < len(self.indices))  and (idx_to_swap >= 0)
         
-        outs = self.get_search_distances(candidates, idx_to_swap=idx_to_swap)
+        search_dists = self.get_search_distances(candidates, idx_to_swap=idx_to_swap)
         
         all_energy_vals = np.ones(self.n)*self.energy
         if self.p is not None:
-            all_energy_vals[candidates] = np.array([out**(self.p).sum()**(1./self.p) for out in outs])
+            all_energy_vals[candidates] = np.array([(s_dist**(self.p)).sum()**(1./self.p) for s_dist in search_dists])
         else:
-            all_energy_vals[candidates] = np.array([np.max(out) for out in outs])
+            all_energy_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
 
         return all_energy_vals
     
@@ -98,7 +100,7 @@ class ConicHullEnergy(EnergyClass):
             self.W[len(self.indices),:] = self.X[:,i].flatten()
         self.G_S[len(self.indices),:] = self.X.T @ self.X[:,i].flatten()
         self.indices.append(i)
-        dists, H = self.nnls_OGM_gram(returnH=True) # computes squared euclidean distances
+        dists, H = self.nnls_OGM_gram(returnH=True)
         self.H[:len(self.indices),:] = H 
         self.dists = dists 
         self.compute_energy()
@@ -109,11 +111,11 @@ class ConicHullEnergy(EnergyClass):
         assert (t < len(self.indices))  and (t >= 0)
         self.indices[t] = i 
         self.G_S[t,:] = self.X.T @ self.X[:,i].flatten()
-        dists, H = self.nnls_OGM_gram(returnH=True) # computes squared euclidean distances
+        dists, H = self.nnls_OGM_gram(returnH=True) 
         self.H = H   # assuming swap is only done with len(self.indices) = self.k
         self.dists = dists 
         self.compute_energy()
-        self.energy_values[t] = self.energy
+        self.energy_values.append(self.energy)
     
     def get_search_distances(self, candidates, idx_to_swap=None):
         if self.verbose:
@@ -124,12 +126,13 @@ class ConicHullEnergy(EnergyClass):
         
         if self.n_jobs is not None:
             with parallel_backend("loky", inner_max_num_threads=1):
-                outs = Parallel(n_jobs=self.n_jobs)(
+                search_dists = Parallel(n_jobs=self.n_jobs)(
                     delayed(self.nnls_OGM_gram)(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator)
         else:
-            outs = [self.nnls_OGM_gram(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator]
+            search_dists = [self.nnls_OGM_gram(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator]
         
-        return outs 
+        
+        return search_dists 
     
 
     def nnls_OGM_gram(self, search_ind=None, idx_to_swap=None, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1):
@@ -141,11 +144,11 @@ class ConicHullEnergy(EnergyClass):
         
         H0 = None 
         if self.use_previous:
-            # cannot use previous if (1) performing swap move or (2) k_sel <= 1
-            if (idx_to_swap is None) and (len(self.indices) > 1):
-                H0 = np.zeros((self.H.shape[0]+1, self.H.shape[1]))
-                H0[:-1,:] = self.H.copy()
-
+            # use previous only if (1) NOT performing swap move and (2) doing a search move with (3) already having computed H previously
+            if (idx_to_swap is None) and (search_ind is not None) and (len(self.indices) > 1):
+                H0 = np.zeros((len(self.indices)+1, self.H.shape[1]))
+                H0[:-1,:] = self.H[:len(self.indices),:].copy()
+        
         S_ind_all = self.indices[:]
         if idx_to_swap is not None:
             assert search_ind is not None
@@ -153,6 +156,7 @@ class ConicHullEnergy(EnergyClass):
         else:
             if search_ind is not None:
                 S_ind_all = S_ind_all + [search_ind]
+        
         
         if len(self.indices) == 0: # case of first iteration
             G_S = self.X[:, S_ind_all].T @ self.X
@@ -165,7 +169,7 @@ class ConicHullEnergy(EnergyClass):
                 if search_ind is None: # just evaluating the projection with the current indices
                     G_S =  np.array(self.G_S[:len(S_ind_all),:], copy=True) 
                 else: # this is a build_phase search case, so include the search_ind now in G_S
-                    G_S =  np.array(self.G_S[:len(S_ind_all)+1,:], copy=True)
+                    G_S =  np.array(self.G_S[:len(S_ind_all),:], copy=True)
                     G_S[-1,:] = (self.X.T @ self.X[:, search_ind]).flatten()
         
         G_SS = G_S[:,S_ind_all]
@@ -176,7 +180,6 @@ class ConicHullEnergy(EnergyClass):
             H = np.maximum(0.0, np.linalg.pinv(G_SS)@ G_S)
         else:
             H = H0.copy()
-
         Z = H.copy()
 
         i = 0
@@ -261,12 +264,6 @@ class KmeansEnergy(EnergyClass):
         self.k_sel += 1
         self.energy_values.append(self.energy)
         return 
-    
-    def init_set(self, inds):
-        assert len(inds) == self.k
-        for i in inds:
-            self.add(i)
-        return
 
     def get_distances(self, i):
         return euclidean_distances(self.X[:,i].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
@@ -288,13 +285,13 @@ class KmeansEnergy(EnergyClass):
             self.compute_D()
 
         if idx_to_swap is None:
-            outs = [np.minimum(self.dists, get_distances(c)) for c in candidates]
+            search_dists = [np.minimum(self.dists, self.get_distances(c)) for c in candidates]
         else:
             assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
             assert self.k == len(self.indices)
             dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
-            outs = [np.minimum(dists_wo_st, get_distances(c)) for c in candidates]
-        return outs
+            search_dists = [np.minimum(dists_wo_st, self.get_distances(c)) for c in candidates]
+        return search_dists
     
 
 

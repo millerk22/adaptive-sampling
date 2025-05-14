@@ -52,6 +52,7 @@ class AdaptiveSampling(Sampler):
         for u in range(num_swaps):
             t = u % k
             q_probs_wo_st = self.Energy.compute_search_values(idx_to_swap=t)
+            inds_wo_st = self.Energy.indices[:t] + self.Energy.indices[t+1:]
             q_probs_wo_st[inds_wo_st] = 0.0       # don't want to give any probability to those points that are already in the current indices set
             q_probs_wo_st = q_probs_wo_st**(self.Energy.p)
             
