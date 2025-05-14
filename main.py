@@ -20,14 +20,17 @@ METHODS = ALL_METHODS #[:-1]
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
-def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
-            n_jobs=12, num_la_samples=100, report_timing=False, overwrite=[],
+def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48), n_jobs=12, report_timing=False, overwrite=[],
             oversample=[], k_os=50):
 
     if args.save:
         if not os.path.exists(args.resultsdir):
             os.makedirs(args.resultsdir)
-        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_p" + str(p) + "_ns" + str(args.numseeds) + "_nla" + str(args.numlasamples) + args.postfix + ".pkl")
+        if p is None:
+            pstring = 'inf'
+        else:
+            pstring = str(p)
+        savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_p" + str(pstring) + "_ns" + str(args.numseeds) + args.postfix + ".pkl")
         results = None 
         if os.path.exists(savename):
             with open(savename, "rb") as f:
@@ -57,14 +60,13 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
     
 
     # order these by alphabetical order
-    #methods_to_do = sorted(methods_to_do)
+    methods_to_do = sorted(methods_to_do)
     
 
     print("Already found results for: ", ", ".join(already_done))
     print("(Re-)Computing results for: ", ", ".join(methods_to_do))
     print(f"\toversample methods = {OVERSAMPLE_METHODS}")
-    print("="*20)
-    print()
+    print("="*40)
     
     for count, method_str in enumerate(methods_to_do):
         if len(results[method_str]['energy']) == args.numseeds:
@@ -82,7 +84,6 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
             k_todo = k_os 
         else:
             k_todo = k
-        print(build_method, build_method, k_todo)
 
         for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
             results[method_str]["seeds"].append(seed)
@@ -110,7 +111,7 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
                     else:
                         raise NotImplementedError(f"build_method = {build_method} not recognized...")
 
-                    sampler.build(k_todo)
+                    sampler.build_phase(k_todo)
                     if report_timing:
                         results[method_str]["times"].append(sampler.times)
 
@@ -118,6 +119,8 @@ def run_test(args, X, k, energy_type, p, seeds=np.arange(42,48),
                 results[method_str]["energy"].append(Energy.energy)
                 
             else:
+                # if we have a swap_method string, then we will read in previously done build moves to 
+                # avoid recomputing...
                 raise NotImplementedError("Swap moves not implemented yet...")
                 indices_from_as = results[build_method_str]["indices"][i] # get the previously computed indices from the non-swap moves method
                                                                     # should have because of check done in main part of script
@@ -241,7 +244,6 @@ if __name__ == "__main__":
     parser.add_argument("--save", default=1, type=int, help="Boolean (i.e., integer 1 or 0) of whether or not to save the results to file.")
     parser.add_argument("--energy", default="conic", help="String name of the evaluation energy type; one of ['conic']")
     parser.add_argument("--numseeds", default=1, type=int, help="Number of random trials (indexed by seeds) to perform")
-    parser.add_argument("--numlasamples", default=-1, type=int, help="Number of samples to evaluate look ahead greedy method on")
     parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
     parser.add_argument("--time", default=1, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
     parser.add_argument("--njobs", default=12, type=int, help="Number of CPU cores to utilize in parallelization.")
@@ -276,8 +278,6 @@ if __name__ == "__main__":
             args.time = int(config['time'])
         if 'numseeds' in config:
             args.numseeds = config['numseeds']
-        if 'numlasamples' in config:
-            args.numlasamples = config['numlasamples']
         if 'powers' in config:
             args.powers = config['powers']
 
@@ -291,12 +291,13 @@ if __name__ == "__main__":
     
     # run the test
     print(f"------------ Running Test for {args.dataset} ----------------")
-    print(f"\tn = {X.shape[0]}, k = {args.k}, k_oversample = {args.k_oversample}, numseeds = {args.numseeds}, num_la_samples = {args.numlasamples}")
+    print(f"\tn = {X.shape[0]}, k = {args.k}, k_oversample = {args.k_oversample}, numseeds = {args.numseeds}")
     
     for p in args.powers:
-        print(f"================== p = {p} ======================")
-        print("=================================================")
         print()
+        print("=================================================")
+        print(f"================== p = {p} =======================")
+        print("=================================================")
 
-        run_test(args, X, args.k, args.energy, p, seeds=np.arange(42,42+args.numseeds), num_la_samples=args.numlasamples, \
+        run_test(args, X, args.k, args.energy, p, seeds=np.arange(42,42+args.numseeds), \
                  report_timing=args.time, n_jobs=args.njobs, overwrite=overwrite_methods, k_os=args.k_oversample)
