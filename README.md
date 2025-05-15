@@ -17,7 +17,7 @@ For example, can run ``python3 main.py --dataset salinas --k 10`` to run the ada
 
 ### Energy Types: 
 * ``conic``: Conic Hull energy, used for NMF.
-* ``clustering``: (not currently implemented, in progress)
+* ``clustering``: __(not currently implemented, in progress)__
 
 
 # Build vs Swap Phases
