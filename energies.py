@@ -248,42 +248,52 @@ class ConicHullEnergy(EnergyClass):
 
 
 
-class KmeansEnergy(EnergyClass):
+class ClusteringEnergy(EnergyClass):
+    """
+    Not finished with implementing
+    """
     def __init__(self, X, k, p=2):
         super().__init__(X, k, p=p)
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
+        self.D = None
         
     def add(self, i):
         i_dists = self.get_distances(i)
-        if self.k_sel > 0:
+        if len(self.indices) > 0:
             np.minimum(self.dists, i_dists, out=self.dists)
         else:
             self.dists = i_dists
         
         self.indices.append(i)
-        self.energy = (self.dists**(self.p)).sum()**(1./self.p)
-        self.k_sel += 1
+        self.compute_energy()
         self.energy_values.append(self.energy)
         return 
-
-    def get_distances(self, i):
-        return euclidean_distances(self.X[:,i].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
+    
+    def swap(self, t, i):
+        assert (t < len(self.indices))  and (t >= 0)
+        if self.D is None:
+            self.D = self.compute_distances(self.indices)
+        self.indices[t] = i 
+        self.D[t,:] = self.compute_distances(i)
+        self.dists = np.min(self.D, axis=0) 
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+    
+    def compute_distances(self, inds):
+        if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
+            dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
                                        squared=False).flatten()
-    
-    def compute_distances(self, inds, search_ind=None):
-        dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+        elif type(inds) == list:
+            dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
                                          X_norm_squared=self.x_squared_norms[inds], squared=False)
-        return 
-    
-    def compute_D(self):
-        self.D = np.zeros((self.k, self.n)) # allocate array
-        self.D[:len(self.indices),:] = euclidean_distances(self.X[:,self.indices].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                         X_norm_squared=self.x_squared_norms[self.indices], squared=False)
-        return 
+        else:
+            raise ValueError(f"inds must be of type `int` or `list`")
+        
+        return dists 
     
     def get_search_distances(self, candidates, idx_to_swap=None):
         if self.D is None:
-            self.compute_D()
+            self.D = self.compute_distances(self.indices)
 
         if idx_to_swap is None:
             search_dists = [np.minimum(self.dists, self.get_distances(c)) for c in candidates]
@@ -291,24 +301,15 @@ class KmeansEnergy(EnergyClass):
             assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
             assert self.k == len(self.indices)
             dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
-            search_dists = [np.minimum(dists_wo_st, self.get_distances(c)) for c in candidates]
+            search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
-    
 
 
 
-        
-    def update_from_search(self, c, choice_dict):
-        self.dists = choice_dict['dists']
-        self.energy = choice_dict['energy']
-        self.energy_values.append(self.energy)
-        self.indices.append(c)
-        self.k_sel += 1
-        return 
-
-
-
-class LpSubspaceEnergy(EnergyClass):
+class LowRankEnergy(EnergyClass):
+    """
+    NOT IMPLEMENTED CURRENTLY
+    """
     def __init__(self, X, k, p=2):
         super().__init__(X, k, p=p)
         self.F = np.zeros((self.n, self.k))
@@ -333,18 +334,6 @@ class LpSubspaceEnergy(EnergyClass):
         self.k_sel += 1
         self.energy_values.append(self.energy)
         return
-    
-    def init_set(self, inds):
-        assert len(inds) == self.k
-        for i in inds:
-            self.add(i)
-        return
-
-    def swap(self, t, i):
-        raise NotImplementedError()
-
-    def search(self, candidates=None):
-        raise NotImplementedError()
 
     
 
