@@ -27,7 +27,7 @@ class EnergyClass(object):
 
     def compute_energy(self):
         if self.p is not None:
-            self.energy = (self.dists**(self.p)).sum()**(1./self.p)
+            self.energy = np.linalg.norm(self.dists, ord=self.p) 
         else:
             self.energy = np.max(self.dists)
         return 
@@ -59,7 +59,7 @@ class EnergyClass(object):
         
         all_energy_vals = np.ones(self.n)*self.energy
         if self.p is not None:
-            all_energy_vals[candidates] = np.array([(s_dist**(self.p)).sum()**(1./self.p) for s_dist in search_dists])
+            all_energy_vals[candidates] = np.array([np.linalg.norm(s_dist, ord=self.p) for s_dist in search_dists])
         else:
             all_energy_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
 
@@ -250,7 +250,7 @@ class ConicHullEnergy(EnergyClass):
 
 class ClusteringEnergy(EnergyClass):
     """
-    Not finished with implementing
+    Not finished with implementing. Need to use whole matrix D (n x n) in search methods since we will be searching over this anyway...
     """
     def __init__(self, X, k, p=2):
         super().__init__(X, k, p=p)
@@ -258,7 +258,7 @@ class ClusteringEnergy(EnergyClass):
         self.D = None
         
     def add(self, i):
-        i_dists = self.get_distances(i)
+        i_dists = self.compute_distances(i)
         if len(self.indices) > 0:
             np.minimum(self.dists, i_dists, out=self.dists)
         else:
@@ -293,10 +293,13 @@ class ClusteringEnergy(EnergyClass):
     
     def get_search_distances(self, candidates, idx_to_swap=None):
         if self.D is None:
-            self.D = self.compute_distances(self.indices)
+            if len(self.indices) == 0:
+                self.D = np.ones((1, self.n))
+            else:
+                self.D = self.compute_distances(self.indices).reshape(1, -1)
 
         if idx_to_swap is None:
-            search_dists = [np.minimum(self.dists, self.get_distances(c)) for c in candidates]
+            search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
         else:
             assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
             assert self.k == len(self.indices)
