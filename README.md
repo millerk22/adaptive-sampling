@@ -1,10 +1,14 @@
 # adaptive-sampling
 
-Code for adaptive sampling framework.
+Code for adaptive sampling framework. See the ``demo.ipynb`` for a brief demo of usage of the ``Energy(X, k=k, p=p)`` and ``AdaptiveSampler(Energy)`` objects for specific dataset applications. 
 
 See ``requirements.txt`` file for some necessary packages for running this code.
 
-The main idea is to be able to run tests via the ``main.py`` file as follows:
+---
+
+## Using ``main.py`` for tests
+
+The idea is to be able to run many tests via the ``main.py`` file as follows:
 ```python3 main.py --dataset <DATASET NAME> --k <# of samples> --energy <EVALUATION ENERGY>```
 * ``dataset``: the name of the dataset the test is running, loading is handled in the ``load_dataset()`` function found in ``datasets.py`. 
 * ``k``: number of sample points (i.e., prototypes, centroids, landmarks) to select
