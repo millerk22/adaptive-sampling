@@ -7,7 +7,8 @@ from collections import defaultdict
 from energies import *
 from sampling import *
 
-METHODS = ["search", "sampling", "uniform", "search_search", "sampling_search", "sampling_sampling"]  
+ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_search", "sampling_sampling"]  
+METHODS = ALL_METHODS[:]
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -73,6 +74,11 @@ def run_experiment(X, p, method_str, results, seeds, args):
         k_todo = args.k
 
     for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
+        # since search is deterministic, only need to run one test
+        if i > 0:
+            if method_str in ["search", "search_search"]:
+                continue 
+        
         results[method_str]["seeds"].append(seed)
 
         if swap_method is None:

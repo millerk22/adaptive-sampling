@@ -6,7 +6,7 @@ from time import perf_counter
 class AdaptiveSampler(object):
     def __init__(self, Energy_, seed=42, report_timing=False):
         self.Energy = Energy_ 
-        self.seed = 42
+        self.seed = seed
         self.report_timing = report_timing
         self.random_state = np.random.RandomState(self.seed)
         self.times = []
@@ -52,6 +52,8 @@ class AdaptiveSampler(object):
         if method == "search": # adaptive-search swap
             swap_flag = True 
             while swap_flag:
+                if self.report_timing:
+                    tic = perf_counter()
                 C = np.zeros((n, k))
                 for t in range(k):
                     C[:,t] = self.Energy.compute_search_values(idx_to_swap=t) # candidates will be the unselected inds, since we consider all entries
@@ -64,11 +66,16 @@ class AdaptiveSampler(object):
                 jstar = self.random_state.choice(len(idx_poss))
                 idx, t = idx_poss[jstar], t_poss[jstar]
 
+                if self.report_timing:
+                    toc = perf_counter()
+                    self.times.append(toc-tic)
+
                 # if the minimum is the current energy, then no swap results in a better energy, so stop swapping
                 if idx in self.Energy.indices:
                     break 
                 else:
                     self.Energy.swap(t, idx)
+                
         else:
             # adaptive-sampling swap 
             check_change_flag = False
@@ -77,6 +84,8 @@ class AdaptiveSampler(object):
                 check_change_flag = True
 
             for u in range(max_swaps):
+                if self.report_timing:
+                    tic = perf_counter()
                 t = u % k
                 if check_change_flag:
                     old_idx = self.Energy.indices[t]
@@ -92,6 +101,10 @@ class AdaptiveSampler(object):
                 else:
                     q_probs_wo_st = q_probs_wo_st**(self.Energy.p)
                     idx = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_wo_st.sum())
+                
+                if self.report_timing:
+                    toc = perf_counter()
+                    self.times.append(toc-tic)
                 
                 # update the Energy object according to this swap move
                 self.Energy.swap(t, idx) 
