@@ -11,11 +11,12 @@ class AdaptiveSampler(object):
         self.random_state = np.random.RandomState(self.seed)
         self.times = []
     
-    def build_phase(self, method="sampling"):
+    def build_phase(self, k, method="sampling"):
         assert method in ["sampling", "search"]
         assert len(self.Energy.indices) == 0   # ensure we are starting with an "empty" indices set
+        self.Energy.set_k(k)                   # allocate memory in the Energy object for the k points to be chosen
 
-        for i in range(self.Energy.k):
+        for i in range(k):
             if self.report_timing:
                 tic = perf_counter()
             
@@ -44,13 +45,15 @@ class AdaptiveSampler(object):
         return 
     
     def swap_phase(self, method="search", max_swaps=None):
-        assert len(self.Energy.indices) == self.Energy.k
         assert method in ["search", "sampling"]
-        k = self.Energy.k
+        k = len(self.Energy.indices)
         n = self.Energy.n
+        if max_swaps is None:
+            max_swaps = k**2
 
         if method == "search": # adaptive-search swap
             swap_flag = True 
+            count = 0
             while swap_flag:
                 if self.report_timing:
                     tic = perf_counter()
@@ -75,6 +78,10 @@ class AdaptiveSampler(object):
                     break 
                 else:
                     self.Energy.swap(t, idx)
+                
+                count += 1
+                if count > max_swaps:
+                    break
                 
         else:
             # adaptive-sampling swap 

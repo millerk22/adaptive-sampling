@@ -84,7 +84,7 @@ def run_experiment(X, p, method_str, results, seeds, args):
         if swap_method is None:
             # Instantiate an Energy object for this test
             if args.energy == "conic":
-                Energy = ConicHullEnergy(X, k_todo, p=p, n_jobs=args.njobs)
+                Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs)
             else:
                 print(f"Energy type = {args.energy} not recognized, skipping")
                 break
@@ -98,7 +98,7 @@ def run_experiment(X, p, method_str, results, seeds, args):
                     results[method_str]["times"].append(k_todo*[None])
             else:
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                sampler.build_phase(method=build_method)
+                sampler.build_phase(k_todo, method=build_method)
                 if args.time:
                     results[method_str]["times"].append(sampler.times)
 
@@ -119,7 +119,7 @@ def run_experiment(X, p, method_str, results, seeds, args):
             for k_ in range(1, args.k+1):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
-                    Energy = ConicHullEnergy(X, k_, p=p, n_jobs=args.njobs)
+                    Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs)
                 else:
                     print(f"Energy type = {args.energy} not recognized, skipping")
                     break
@@ -144,72 +144,4 @@ def run_experiment(X, p, method_str, results, seeds, args):
                 # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
                 results[method_str]["times"].append(times_swap)
 
-    return results 
-
-
-
-
-
-# old, not implemented for swaps
-
-def run_experiment_old(X, p, method_str, results, seeds, args):
-    if len(method_str.split("_")) == 2:
-        build_method, swap_method = method_str.split("_")
-    else:
-        build_method = method_str
-        swap_method = None
-    
-    # if this build method is designated to be oversampled, set the value of k accordingly
-    if build_method in OVERSAMPLE_METHODS: 
-        k_todo = args.k_oversample 
-    else:
-        k_todo = args.k
-
-    for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
-        results[method_str]["seeds"].append(seed)
-
-        if swap_method is None:
-            # Instantiate an Energy object for this test
-            if args.energy == "conic":
-                Energy = ConicHullEnergy(X, k_todo, p=p, n_jobs=args.njobs)
-            else:
-                print(f"Energy type = {args.energy} not recognized, skipping")
-                break
-
-            # Perform the build function for this run
-            if build_method == "uniform":
-                # uniform can be done all at once
-                random_state = np.random.RandomState(seed)
-                Energy.init_set(list(random_state.choice(Energy.n, k_todo, replace=False)))
-                if args.time:
-                    results[method_str]["times"].append(k_todo*[None])
-            else:
-                if build_method == "sampling":
-                    sampler = AdaptiveSampling(Energy, seed=seed, report_timing=args.time)
-                elif build_method == "search":
-                    sampler = AdaptiveSearch(Energy, seed=seed, report_timing=args.time)
-                else:
-                    raise NotImplementedError(f"build_method = {build_method} not recognized...")
-
-                sampler.build_phase(k_todo)
-                if args.time:
-                    results[method_str]["times"].append(sampler.times)
-
-            results[method_str]["indices"].append(Energy.indices)
-            results[method_str]["energy"].append(Energy.energy)
-            results[method_str]["energy_values"].append(Energy.energy_values)
-            
-        else:
-            # if we have a swap_method string, then we will read in previously done build moves to 
-            # avoid recomputing...
-            raise NotImplementedError("Swap moves not implemented yet...")
-            indices_from_as = results[build_method_str]["indices"][i] # get the previously computed indices from the non-swap moves method
-                                                                # should have because of check done in main part of script
-            energy_values, indices, times_all = perform_swaps_for_all(X, args.kstart, indices_from_as, swap_method, report_timing=True, verbose=True)
-            results[method_str]["indices"].append(indices)
-            results[method_str]["energy_values"].append(np.array(energy_values) / Xfro_norm2)
-            if report_timing:
-                # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
-                results[method_str]["times"].append([sum(results[as_method_str]["times"][i][:idx]) + sum(times_all[idx]) for idx in range(args.kstart, len(indices_from_as))])
-    
     return results 

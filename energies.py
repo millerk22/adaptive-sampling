@@ -9,10 +9,14 @@ from scipy.optimize import nnls
 
 IMPLEMENTED_ENERGIES = ['conic']
 
+'''
+Todo: don't make energies dependent on k. Maybe can make it an optional parameter to allocate memory for certain implementations. But this k should be a part of the AdaptiveSampler object...
+'''
+
 class EnergyClass(object):
-    def __init__(self, X, k, p=2):
+    def __init__(self, X, p=2):
         self.X = X
-        self.k = k
+        self.k = None 
         self.p = p
         assert (self.p is None) or (self.p > 0)
         self.d, self.n = X.shape
@@ -24,6 +28,12 @@ class EnergyClass(object):
             self.Xfro_norm2 = sps.linalg.norm(self.X, ord='fro')**2.
         else:
             self.Xfro_norm2 = np.linalg.norm(self.X, ord='fro')**2.
+
+    def set_k(self, k):
+        assert type(k) == int 
+        assert k >= 0
+        self.k = k
+        return 
 
     def compute_energy(self):
         if self.p is not None:
@@ -39,8 +49,9 @@ class EnergyClass(object):
     def swap(self, t, i):
         return
 
-    def init_set(self, inds): 
-        assert len(inds) == self.k
+    def init_set(self, inds):
+        assert self.k is None 
+        self.set_k(len(inds))
         for i in inds:
             self.add(i)
         return
@@ -69,13 +80,10 @@ class EnergyClass(object):
 
 
 class ConicHullEnergy(EnergyClass):
-    def __init__(self, X, k, p=2, n_jobs=4, verbose=False):
-        super().__init__(X, k, p=p)
+    def __init__(self, X, p=2, n_jobs=4, verbose=False):
+        super().__init__(X, p=p)
         assert self.X.min() >= -1e-13 # ensure non-negativity
         self.sparse_flag = sps.issparse(self.X)
-        
-        self.W = np.zeros((self.k, self.d))
-        self.H = np.zeros((self.k, self.n))
 
         # Compute Euclidean norms raised to the pth power of each row
         if self.sparse_flag:
@@ -86,14 +94,21 @@ class ConicHullEnergy(EnergyClass):
         self.compute_energy()
         self.use_previous = True
         self.G_diag = self.dists**2.
-        self.G_S = np.zeros((self.k, self.n)) 
         self.verbose = verbose
         self.n_jobs = n_jobs
+        
+
+    def set_k(self, k):
+        super().set_k(k)
+        self.W = np.zeros((self.k, self.d))
+        self.H = np.zeros((self.k, self.n))
+        self.G_S = np.zeros((self.k, self.n)) 
+        return 
     
         
     def add(self, i):
-        if len(self.indices) == self.k:
-            raise NotImplementedError(f"Cannot add more to indices. self.k = {self.k}, len(self.indices) = {len(self.indices)}")
+        if self.k is None:
+            raise NotImplementedError("Iterative allocation of memory for ConicHullEnergy objects not yet implemented. Must set desired k with ConicHullEnergy.set_k(k)")
         if self.sparse_flag:
             self.W[len(self.indices),:] = self.X[:,i].todense().A1.flatten()
         else:
@@ -247,23 +262,31 @@ class ConicHullEnergy(EnergyClass):
 #####################################
 
 
+FLOAT_THRESHOLD = 20000
 
 class ClusteringEnergy(EnergyClass):
     """
     Not finished with implementing. Need to use whole matrix D (n x n) in search methods since we will be searching over this anyway...
     """
-    def __init__(self, X, k, p=2):
-        super().__init__(X, k, p=p)
+    def __init__(self, X, p=2):
+        super().__init__(X, p=p)
+        self.d, self.n = self.X.shape
+        if self.n >= FLOAT_THRESHOLD:
+            self.X = self.X.astype(np.float32)
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
-        self.D = None
+        self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
+        self.compute_energy()
+    
+    def set_k(self, k):
+        super().set_k(k)
+        self.D = np.zeros((self.k, self.n), dtype=self.X.dtype)
         
     def add(self, i):
-        i_dists = self.compute_distances(i)
+        self.D[len(self.indices),:] = self.compute_distances(i)
         if len(self.indices) > 0:
-            np.minimum(self.dists, i_dists, out=self.dists)
+            np.minimum(self.D[len(self.indices),:], self.dists, out=self.dists)
         else:
-            self.dists = i_dists
-        
+            self.dists = self.D[0,:].copy()
         self.indices.append(i)
         self.compute_energy()
         self.energy_values.append(self.energy)
@@ -292,12 +315,7 @@ class ClusteringEnergy(EnergyClass):
         return dists 
     
     def get_search_distances(self, candidates, idx_to_swap=None):
-        if self.D is None:
-            if len(self.indices) == 0:
-                self.D = np.ones((1, self.n))
-            else:
-                self.D = self.compute_distances(self.indices).reshape(1, -1)
-
+        
         if idx_to_swap is None:
             search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
         else:
@@ -313,8 +331,8 @@ class LowRankEnergy(EnergyClass):
     """
     NOT IMPLEMENTED CURRENTLY
     """
-    def __init__(self, X, k, p=2):
-        super().__init__(X, k, p=p)
+    def __init__(self, X, p=2):
+        super().__init__(X, p=p)
         self.F = np.zeros((self.n, self.k))
         self.dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
         self.energy = self.dists.sum()
