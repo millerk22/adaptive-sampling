@@ -132,7 +132,7 @@ class ConicHullEnergy(EnergyClass):
     def get_search_distances(self, candidates, idx_to_swap=None):
         if self.verbose:
             iterator = tqdm(candidates, total=len(candidates))
-            iterator.set_description(f"Computing conic hull quality values... len(self.indices) = {len(self.indices)}")
+            iterator.set_description(f"Computing conic hull search values... len(self.indices) = {len(self.indices)}")
         else:
             iterator = candidates
         
