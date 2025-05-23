@@ -7,8 +7,8 @@ from collections import defaultdict
 from energies import *
 from sampling import *
 
-ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_search", "sampling_sampling"]  
-METHODS = ALL_METHODS[:]
+ALL_METHODS = ["search", "sampling", "uniform", "sampling_sampling", "search_search", "sampling_search"]  
+METHODS = ALL_METHODS[:4]   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -84,7 +84,7 @@ def run_experiment(X, p, method_str, results, seeds, args):
         if swap_method is None:
             # Instantiate an Energy object for this test
             if args.energy == "conic":
-                Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs)
+                Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
             elif args.energy == "cluster":
                 Energy = ClusteringEnergy(X, p=p)
             else:
@@ -121,7 +121,9 @@ def run_experiment(X, p, method_str, results, seeds, args):
             for k_ in range(1, args.k+1):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
-                    Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs)
+                    Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
+                elif args.energy == "cluster":
+                    Energy = ClusteringEnergy(X, p=p)
                 else:
                     print(f"Energy type = {args.energy} not recognized, skipping")
                     break
