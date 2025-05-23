@@ -85,6 +85,8 @@ def run_experiment(X, p, method_str, results, seeds, args):
             # Instantiate an Energy object for this test
             if args.energy == "conic":
                 Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs)
+            elif args.energy == "cluster":
+                Energy = ClusteringEnergy(X, p=p)
             else:
                 print(f"Energy type = {args.energy} not recognized, skipping")
                 break

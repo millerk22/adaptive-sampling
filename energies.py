@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from scipy.optimize import nnls
 
-IMPLEMENTED_ENERGIES = ['conic']
+IMPLEMENTED_ENERGIES = ['conic', 'cluster']
 
 '''
 Todo: don't make energies dependent on k. Maybe can make it an optional parameter to allocate memory for certain implementations. But this k should be a part of the AdaptiveSampler object...
