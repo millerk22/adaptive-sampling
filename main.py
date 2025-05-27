@@ -98,7 +98,7 @@ if __name__ == "__main__":
     
     # run the test
     print(f"------------ Running Test for {args.dataset} ----------------")
-    print(f"\tn = {X.shape[1]}, k = {args.k}, k_oversample = {args.k_oversample}, numseeds = {args.numseeds}")
+    print(f"\tn = {X.shape[1]}, k = {args.k}, k_oversample = {args.k_oversample}, numseeds = {args.numseeds}, njobs = {args.njobs}")
     
     for p in args.powers:
         print()
