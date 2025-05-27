@@ -148,7 +148,7 @@ class ConicHullEnergy(EnergyClass):
         return search_dists 
     
 
-    def nnls_OGM_gram(self, search_ind=None, idx_to_swap=None, delta=1e-3, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1):
+    def nnls_OGM_gram(self, search_ind=None, idx_to_swap=None, delta=1e-6, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1):
         """
         Non-negative Least Squares, Optimal Gradient Method, using the Gram matrix.
         """

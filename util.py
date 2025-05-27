@@ -8,7 +8,7 @@ from energies import *
 from sampling import *
 
 ALL_METHODS = ["search", "sampling", "uniform", "sampling_sampling", "search_search", "sampling_search"]  
-METHODS = ALL_METHODS[:4]   # search swap moves is taking a very long time doing all i <= k swaps....
+METHODS = ALL_METHODS[:5]   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
