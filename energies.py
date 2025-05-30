@@ -337,6 +337,14 @@ class ClusteringEnergy(EnergyClass):
             search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
 
+    def get_swap_distances(self, idx_to_swap):
+        inds_wo_t = self.indices[:]
+        inds_wo_t.pop(idx_to_swap)
+        dists = self.compute_distances(inds_wo_t)
+        if self.p is None:
+            return 1.*(dists == np.max(dists))
+        return dists**(self.p)
+
 
 
 
