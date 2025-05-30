@@ -97,16 +97,16 @@ class AdaptiveSampler(object):
                 if check_change_flag:
                     old_idx = self.Energy.indices[t]
 
-                q_probs_wo_st = self.Energy.compute_search_values(idx_to_swap=t)
+                # WRONG -- this will do look-ahead on each, just need to compute dists with ignoring idx_to_swap = t
+                q_probs_wo_st = self.Energy.get_swap_distances(idx_to_swap=t)
                 inds_wo_st = self.Energy.indices[:t] + self.Energy.indices[t+1:]
                 q_probs_wo_st[inds_wo_st] = 0.0       # don't want to give any probability to those points that are already in the current indices set
                 
                 # sample the swap move point
                 if self.Energy.p is None:
-                    max_idxs = np.where(q_probs_wo_st == np.max(q_probs_wo_st))[0]
+                    max_idxs = np.where(q_probs_wo_st == 1.0)[0]
                     idx = self.random_state.choice(max_idxs)
                 else:
-                    q_probs_wo_st = q_probs_wo_st**(self.Energy.p)
                     idx = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_wo_st.sum())
                 
                 if self.report_timing:

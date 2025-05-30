@@ -105,5 +105,7 @@ if __name__ == "__main__":
         print("=================================================")
         print(f"================== p = {p} =======================")
         print("=================================================")
+        if p == "None":
+            p = None
 
         run_experiments_p(args, X, p, seeds=np.arange(42,42+args.numseeds), overwrite=overwrite_methods)

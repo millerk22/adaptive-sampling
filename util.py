@@ -38,7 +38,9 @@ def find_methods_to_do(args, p, overwrite=[]):
                 methods_to_do.append(method_str)
                 continue 
             if method_str in results:
-                if len(results[method_str]['energy_values']) == args.numseeds:
+                if len(results[method_str]['seeds']) == args.numseeds:
+                    already_done.append(method_str)
+                elif (method_str.split("_")[0] == "search") and (len(results[method_str]['seeds']) == 1):
                     already_done.append(method_str)
                 else:
                     methods_to_do.append(method_str)

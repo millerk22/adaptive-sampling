@@ -41,6 +41,7 @@ class EnergyClass(object):
         
     def add(self, i):
         self.indices.append(i)
+        self.compute_energy()
         return
     
     def swap(self, t, i):
@@ -72,6 +73,9 @@ class EnergyClass(object):
             all_energy_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
 
         return all_energy_vals
+    
+    def get_swap_distances(self, idx_to_swap):
+        return NotImplementedError()
     
     
 
@@ -119,6 +123,12 @@ class ConicHullEnergy(EnergyClass):
         self.energy_values.append(self.energy)
         return
 
+    def get_swap_distances(self, idx_to_swap):
+        dists = self.nnls_OGM_gram(idx_to_swap=idx_to_swap)
+        if self.p is None:
+            return 1.0*(dists == np.max(dists))   # mask where dists is largest
+        return dists**(self.p)
+
     def swap(self, t, i):
         assert (t < len(self.indices))  and (t >= 0)
         self.indices[t] = i 
@@ -164,8 +174,10 @@ class ConicHullEnergy(EnergyClass):
         
         S_ind_all = self.indices[:]
         if idx_to_swap is not None:
-            assert search_ind is not None
-            S_ind_all[idx_to_swap] = search_ind 
+            if search_ind is not None:
+                S_ind_all[idx_to_swap] = search_ind 
+            else:
+                S_ind_all = S_ind_all[:idx_to_swap] + S_ind_all[idx_to_swap+1:]
         else:
             if search_ind is not None:
                 S_ind_all = S_ind_all + [search_ind]
@@ -174,10 +186,13 @@ class ConicHullEnergy(EnergyClass):
         if len(self.indices) == 0: # case of first iteration
             G_S = self.X[:, S_ind_all].T @ self.X
         else:
-            if idx_to_swap is not None: # swap move should only happen when self.G_S.shape[0] == self.k
-                assert self.G_S.shape[0] == self.k
-                G_S = np.array(self.G_S, copy=True) 
-                G_S[idx_to_swap, :] = self.X.T @ self.X[:,search_ind].flatten()
+            if idx_to_swap is not None: 
+                assert self.G_S.shape[0] == self.k  # swap move should only happen when self.G_S.shape[0] == self.k
+                if search_ind is not None: 
+                    G_S = np.array(self.G_S, copy=True) 
+                    G_S[idx_to_swap, :] = self.X.T @ self.X[:,search_ind].flatten()
+                else:
+                    G_S = np.delete(self.G_S, idx_to_swap, axis=0)
             else:
                 if search_ind is None: # just evaluating the projection with the current indices
                     G_S =  np.array(self.G_S[:len(S_ind_all),:], copy=True) 
@@ -321,6 +336,70 @@ class ClusteringEnergy(EnergyClass):
             dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
             search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
+
+
+
+
+class ClusteringEnergyFullD(EnergyClass):
+    """
+    Not finished with implementing. Need to use whole matrix D (n x n) in search methods since we will be searching over this anyway...
+    """
+    def __init__(self, X, p=2):
+        super().__init__(X, p=p)
+        self.d, self.n = self.X.shape
+        if self.n >= FLOAT_THRESHOLD:
+            self.X = self.X.astype(np.float32)
+        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
+        self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
+        self.compute_energy()
+        print("Computing full Distance and Quality matrices up front...\n\tRecommended to only use this for search build and search/sampling swap phases...")
+        self.D = self.compute_distances(self.X)  
+        self.Q = self.D.copy()
+    
+    def set_k(self, k):
+        super().set_k(k)
+        
+    def add(self, i):
+        self.indices.append(i)
+        self.dists = self.Q[:,self.indices[-1]]                    # updated dists are just the most recent column of Q
+        np.minimum(self.dists.reshape(-1, 1), self.D, out=self.Q)  # update the quality matrix
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+        return 
+    
+
+    def swap(self, t, i):
+        assert (t < len(self.indices))  and (t >= 0)
+        self.indices[t] = i 
+        self.dists = self.Q[:, i]
+        np.minimum(self.dists.reshape(-1,1), self.D, out=self.Q)
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+    
+    def compute_distances(self, inds):
+        if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
+            dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
+                                       squared=False).flatten()
+        elif type(inds) == list:
+            dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+                                         X_norm_squared=self.x_squared_norms[inds], squared=False)
+        else:
+            raise ValueError(f"inds must be of type `int` or `list`")
+        
+        return dists 
+    
+    def get_search_distances(self, candidates, idx_to_swap=None):
+        
+        if idx_to_swap is None:
+            search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
+        else:
+            assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
+            assert self.k == len(self.indices)
+            dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
+            search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
+        return search_dists
+
+
 
 
 
