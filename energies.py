@@ -21,6 +21,7 @@ class EnergyClass(object):
         self.indices = []
         self.dists = np.ones(self.n)
         self.energy_values = []
+        self.type = None
         if sps.issparse(X):
             self.Xfro_norm2 = sps.linalg.norm(self.X, ord='fro')**2.
         else:
@@ -54,8 +55,8 @@ class EnergyClass(object):
             self.add(i)
         return
 
-    def get_search_distances(self, candidates, idx_to_swap=None):
-        return 
+    def search_distances(self, candidates, idx_to_swap=None):
+        return NotImplementedError()
     
     def compute_search_values(self, candidates=None, idx_to_swap=None):
         if candidates is None:
@@ -64,7 +65,7 @@ class EnergyClass(object):
         if idx_to_swap is not None:
             assert (idx_to_swap < len(self.indices))  and (idx_to_swap >= 0)
         
-        search_dists = self.get_search_distances(candidates, idx_to_swap=idx_to_swap)
+        search_dists = self.search_distances(candidates, idx_to_swap=idx_to_swap)
         
         all_energy_vals = np.ones(self.n)*self.energy
         if self.p is not None:
@@ -74,7 +75,7 @@ class EnergyClass(object):
 
         return all_energy_vals
     
-    def get_swap_distances(self, idx_to_swap):
+    def compute_swap_distances(self, idx_to_swap):
         return NotImplementedError()
     
     
@@ -97,6 +98,7 @@ class ConicHullEnergy(EnergyClass):
         self.G_diag = self.dists**2.
         self.verbose = verbose
         self.n_jobs = n_jobs
+        self.type = "conic"
         
 
     def set_k(self, k):
@@ -123,7 +125,7 @@ class ConicHullEnergy(EnergyClass):
         self.energy_values.append(self.energy)
         return
 
-    def get_swap_distances(self, idx_to_swap):
+    def compute_swap_distances(self, idx_to_swap):
         dists = self.nnls_OGM_gram(idx_to_swap=idx_to_swap)
         if self.p is None:
             return 1.0*(dists == np.max(dists))   # mask where dists is largest
@@ -139,7 +141,7 @@ class ConicHullEnergy(EnergyClass):
         self.compute_energy()
         self.energy_values.append(self.energy)
     
-    def get_search_distances(self, candidates, idx_to_swap=None):
+    def search_distances(self, candidates, idx_to_swap=None):
         if self.verbose:
             iterator = tqdm(candidates, total=len(candidates))
             iterator.set_description(f"Computing conic hull search values... len(self.indices) = {len(self.indices)}")
@@ -288,6 +290,7 @@ class ClusteringEnergy(EnergyClass):
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
         self.compute_energy()
+        self.type = "cluster"
     
     def set_k(self, k):
         super().set_k(k)
@@ -326,7 +329,7 @@ class ClusteringEnergy(EnergyClass):
         
         return dists 
     
-    def get_search_distances(self, candidates, idx_to_swap=None):
+    def search_distances(self, candidates, idx_to_swap=None):
         
         if idx_to_swap is None:
             search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
@@ -337,7 +340,7 @@ class ClusteringEnergy(EnergyClass):
             search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
 
-    def get_swap_distances(self, idx_to_swap):
+    def compute_swap_distances(self, idx_to_swap):
         inds_wo_t = self.indices[:]
         inds_wo_t.pop(idx_to_swap)
         dists = self.compute_distances(inds_wo_t)
@@ -363,6 +366,7 @@ class ClusteringEnergyFullD(EnergyClass):
         print("Computing full Distance and Quality matrices up front...\n\tRecommended to only use this for search build and search/sampling swap phases...")
         self.D = self.compute_distances(self.X)  
         self.Q = self.D.copy()
+        self.type = "cluster-dense"
     
     def set_k(self, k):
         super().set_k(k)
@@ -396,7 +400,7 @@ class ClusteringEnergyFullD(EnergyClass):
         
         return dists 
     
-    def get_search_distances(self, candidates, idx_to_swap=None):
+    def search_distances(self, candidates, idx_to_swap=None):
         
         if idx_to_swap is None:
             search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
@@ -406,6 +410,32 @@ class ClusteringEnergyFullD(EnergyClass):
             dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
             search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
+
+    def compute_swap_distances(self, idx_to_swap):
+        inds_wo_t = self.indices[:]
+        inds_wo_t.pop(idx_to_swap)
+        dists = self.compute_distances(inds_wo_t)
+        if self.p is None:
+            return 1.*(dists == np.max(dists))
+        return dists**(self.p)
+
+    def compute_C_matrix(self):
+        n = np.argmin(self.D[:, self.indices], axis=1)
+        q = np.take_along_axis(self.D, np.expand_dims(n, axis=1), axis=1).squeeze(axis=1)
+        r = np.min(self.D[np.ix_(np.arange(self.X.shape[0]), n)], axis=1)
+        Q = np.minimum(q.reshape(-1,1), self.D)
+        C = np.linalg.norm(Q, axis=0, ord=self.p).reshape(-1,1) * np.ones(len(self.indices)).reshape(1,-1)
+        qp = q**self.p
+
+        for i in range(self.X.shape[0]):
+            rnew = np.maximum(q, np.minimum(self.D[i,:], r))
+            if self.p is not None:
+                C[:,n[i]] = (C[:,n[i]]**self.p - qp + rnew**self.p)**(1./self.p)
+            else:
+                C[:,n[i]] = np.maximum(C[:,n[i]], rnew.reshape(-1,1))
+        
+        return C
+        
 
 
 

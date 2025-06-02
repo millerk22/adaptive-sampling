@@ -57,10 +57,16 @@ class AdaptiveSampler(object):
             while swap_flag:
                 if self.report_timing:
                     tic = perf_counter()
-                C = np.zeros((n, k))
-                for t in range(k):
-                    C[:,t] = self.Energy.compute_search_values(idx_to_swap=t) # candidates will be the unselected inds, since we consider all entries
-                                                                        # of C that correspond to the current indices (S) will just have the current energy value.
+                
+                if self.Energy.type == "conic":
+                    C = np.zeros((n, k))
+                    for t in range(k):
+                        C[:,t] = self.Energy.compute_search_values(idx_to_swap=t) # candidates will be the unselected inds, since we consider all entries
+                                                                            # of C that correspond to the current indices (S) will just have the current energy value.
+                elif self.Energy.type == "cluster-dense":
+                    C = self.Energy.compute_C_matrix()
+                else:
+                    raise NotImplementedError(f"search swap moves not yet implemented for {self.Energy.type}...")
                 
                 assert (C[self.Energy.indices, :] == self.Energy.energy).all()
                 
@@ -97,8 +103,8 @@ class AdaptiveSampler(object):
                 if check_change_flag:
                     old_idx = self.Energy.indices[t]
 
-                # WRONG -- this will do look-ahead on each, just need to compute dists with ignoring idx_to_swap = t
-                q_probs_wo_st = self.Energy.get_swap_distances(idx_to_swap=t)
+                # compute the distances to prototypes with the current index swapped out
+                q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)
                 inds_wo_st = self.Energy.indices[:t] + self.Energy.indices[t+1:]
                 q_probs_wo_st[inds_wo_st] = 0.0       # don't want to give any probability to those points that are already in the current indices set
                 

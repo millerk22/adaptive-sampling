@@ -64,6 +64,7 @@ def load_dataset(dataset_name, n_test=500):
         print(X.shape)
         X = X[subset]
         print(X.shape)
+        print(np.unique(labels[mask]))
         
     elif dataset_name == "articles":
         (X, _, _) = joblib.load("../topic-model-tutorial/articles-tfidf.pkl")
