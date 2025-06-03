@@ -58,17 +58,17 @@ class AdaptiveSampler(object):
                 if self.report_timing:
                     tic = perf_counter()
                 
-                if self.Energy.type == "conic":
+                if self.Energy.type in ["conic", "cluster"]:
                     C = np.zeros((n, k))
                     for t in range(k):
                         C[:,t] = self.Energy.compute_search_values(idx_to_swap=t) # candidates will be the unselected inds, since we consider all entries
                                                                             # of C that correspond to the current indices (S) will just have the current energy value.
+                                                                            # NOTE: this gives a different value of C than in the compute_C_matrix() setting, but the minimum 
+                                                                            #     across each row is the same, so the computation that comes after is unaffected.
                 elif self.Energy.type == "cluster-dense":
                     C = self.Energy.compute_C_matrix()
                 else:
                     raise NotImplementedError(f"search swap moves not yet implemented for {self.Energy.type}...")
-                
-                assert (C[self.Energy.indices, :] == self.Energy.energy).all()
                 
                 # find swap move in argmin_{idx,t} C(idx,t). arbitrarily break ties
                 idx_poss, t_poss = np.where(C == np.min(C))

@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from scipy.optimize import nnls
 
-IMPLEMENTED_ENERGIES = ['conic', 'cluster']
+IMPLEMENTED_ENERGIES = ['conic', 'cluster', 'clusterfull']
 
 
 class EnergyClass(object):
@@ -67,6 +67,8 @@ class EnergyClass(object):
         
         search_dists = self.search_distances(candidates, idx_to_swap=idx_to_swap)
         
+        # we make the assumption that we don't need to consider already selected points in our search values. We assume that their search 
+        # value--even in the case of swaps--is simply the current energy.  
         all_energy_vals = np.ones(self.n)*self.energy
         if self.p is not None:
             all_energy_vals[candidates] = np.array([np.linalg.norm(s_dist, ord=self.p) for s_dist in search_dists])
@@ -280,7 +282,7 @@ FLOAT_THRESHOLD = 20000
 
 class ClusteringEnergy(EnergyClass):
     """
-    Not finished with implementing. Need to use whole matrix D (n x n) in search methods since we will be searching over this anyway...
+    Need to debug and make sure it aligns with the fullD corresponding energy.
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
@@ -330,7 +332,6 @@ class ClusteringEnergy(EnergyClass):
         return dists 
     
     def search_distances(self, candidates, idx_to_swap=None):
-        
         if idx_to_swap is None:
             search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
         else:
@@ -353,7 +354,7 @@ class ClusteringEnergy(EnergyClass):
 
 class ClusteringEnergyFullD(EnergyClass):
     """
-    Not finished with implementing. Need to use whole matrix D (n x n) in search methods since we will be searching over this anyway...
+    Need to finish debugging this...
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
@@ -364,7 +365,7 @@ class ClusteringEnergyFullD(EnergyClass):
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
         self.compute_energy()
         print("Computing full Distance and Quality matrices up front...\n\tRecommended to only use this for search build and search/sampling swap phases...")
-        self.D = self.compute_distances(self.X)  
+        self.D = self.compute_distances()  
         self.Q = self.D.copy()
         self.type = "cluster-dense"
     
@@ -388,27 +389,26 @@ class ClusteringEnergyFullD(EnergyClass):
         self.compute_energy()
         self.energy_values.append(self.energy)
     
-    def compute_distances(self, inds):
+    def compute_distances(self, inds=None):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
             dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
                                        squared=False).flatten()
         elif type(inds) == list:
             dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
                                          X_norm_squared=self.x_squared_norms[inds], squared=False)
+        elif inds is None:
+            dists = euclidean_distances(self.X.T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+                                         X_norm_squared=self.x_squared_norms, squared=False)
         else:
             raise ValueError(f"inds must be of type `int` or `list`")
         
         return dists 
     
     def search_distances(self, candidates, idx_to_swap=None):
-        
         if idx_to_swap is None:
-            search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
+            search_dists = np.minimum(self.D[candidates,:], self.dists.reshape(1,-1))
         else:
-            assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
-            assert self.k == len(self.indices)
-            dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
-            search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
+            raise ValueError("Shouldn't be using this function with 'idx_to_swap=None'... something wrong")
         return search_dists
 
     def compute_swap_distances(self, idx_to_swap):
@@ -420,19 +420,22 @@ class ClusteringEnergyFullD(EnergyClass):
         return dists**(self.p)
 
     def compute_C_matrix(self):
-        n = np.argmin(self.D[:, self.indices], axis=1)
-        q = np.take_along_axis(self.D, np.expand_dims(n, axis=1), axis=1).squeeze(axis=1)
-        r = np.min(self.D[np.ix_(np.arange(self.X.shape[0]), n)], axis=1)
-        Q = np.minimum(q.reshape(-1,1), self.D)
-        C = np.linalg.norm(Q, axis=0, ord=self.p).reshape(-1,1) * np.ones(len(self.indices)).reshape(1,-1)
-        qp = q**self.p
-
-        for i in range(self.X.shape[0]):
-            rnew = np.maximum(q, np.minimum(self.D[i,:], r))
+        if self.p is None:
+            p_ = 'inf'
+        else:
+            p_ = self.p
+        ns = np.argsort(self.D[:, self.indices], axis=1)
+        n = ns[:,0]
+        nr = ns[:,1]
+        q = np.take_along_axis(self.D[:,self.indices], np.expand_dims(n, axis=1), axis=1).squeeze(axis=1)
+        r = np.take_along_axis(self.D[:,self.indices], np.expand_dims(nr, axis=1), axis=1).squeeze(axis=1)
+        Q = np.minimum(self.D, q.reshape(-1,1))
+        C = np.linalg.norm(Q, axis=0, ord=p_).reshape(-1,1) * np.ones(len(self.indices)).reshape(1,-1)
+        for l in range(self.n):
             if self.p is not None:
-                C[:,n[i]] = (C[:,n[i]]**self.p - qp + rnew**self.p)**(1./self.p)
+                C[:,n[l]] = (C[:,n[l]]**self.p  + np.minimum(self.D[:,l], r[l])**self.p - Q[l,:]**self.p)**(1./self.p)  # update all the l^th terms in the sums corresponding to ejecting n[l]th current prototype
             else:
-                C[:,n[i]] = np.maximum(C[:,n[i]], rnew.reshape(-1,1))
+                C[:,n[l]] = np.maximum(C[:,n[l]], np.minimum(self.D[:,l], r[l]))
         
         return C
         
