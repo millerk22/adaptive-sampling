@@ -78,6 +78,7 @@ def load_dataset(dataset_name, n_test=500):
         X[nan_inds] = np.take(col_means, nan_inds[1]) 
     elif dataset_name == "smile":
         X, bw = smile(10000)
+        print(X.shape)
     elif dataset_name == "outliers":
         X, _ = outliers(10000)
     elif dataset_name == "test":

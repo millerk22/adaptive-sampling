@@ -44,12 +44,17 @@ class AdaptiveSampler(object):
             self.Energy.add(idx)
         return 
     
-    def swap_phase(self, method="search", max_swaps=None):
+    def swap_phase(self, method="search", max_swaps=None, debug=False):
         assert method in ["search", "sampling"]
         k = len(self.Energy.indices)
         n = self.Energy.n
         if max_swaps is None:
             max_swaps = k**2
+
+        if debug:
+            inds = [self.Energy.indices[:]]
+            energy_vals = [self.Energy.energy]
+            dists_vals = [self.Energy.dists.copy()]
 
         if method == "search": # adaptive-search swap
             swap_flag = True 
@@ -72,6 +77,11 @@ class AdaptiveSampler(object):
                 
                 # find swap move in argmin_{idx,t} C(idx,t). arbitrarily break ties
                 idx_poss, t_poss = np.where(C == np.min(C))
+
+                # if the minimum is the current energy, then no swap results in a better energy, so stop swapping
+                if np.intersect1d(self.Energy.indices, idx_poss).size > 0:
+                    break 
+
                 jstar = self.random_state.choice(len(idx_poss))
                 idx, t = idx_poss[jstar], t_poss[jstar]
 
@@ -79,11 +89,7 @@ class AdaptiveSampler(object):
                     toc = perf_counter()
                     self.times.append(toc-tic)
 
-                # if the minimum is the current energy, then no swap results in a better energy, so stop swapping
-                if idx in self.Energy.indices:
-                    break 
-                else:
-                    self.Energy.swap(t, idx)
+                self.Energy.swap(t, idx)
                 
                 count += 1
                 if count > max_swaps:
@@ -103,7 +109,7 @@ class AdaptiveSampler(object):
                 if check_change_flag:
                     old_idx = self.Energy.indices[t]
 
-                # compute the distances to prototypes with the current index swapped out
+                # compute the distances to prototypes minus the current index swapped out
                 q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)
                 inds_wo_st = self.Energy.indices[:t] + self.Energy.indices[t+1:]
                 q_probs_wo_st[inds_wo_st] = 0.0       # don't want to give any probability to those points that are already in the current indices set
@@ -131,6 +137,12 @@ class AdaptiveSampler(object):
                     old_idx = idx   
                     if no_change_count == k:
                         break
-        
+                
+                if debug:
+                    inds.append(self.Energy.indices[:])
+                    energy_vals.append(self.Energy.energy)
+                    dists_vals.append(self.Energy.dists.copy())
+        if debug:
+            return inds, energy_vals, dists_vals
         return 
 

@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from scipy.optimize import nnls
 
-IMPLEMENTED_ENERGIES = ['conic', 'cluster', 'clusterfull']
+IMPLEMENTED_ENERGIES = ['conic', 'cluster', 'cluster-dense']
 
 
 class EnergyClass(object):
@@ -128,7 +128,10 @@ class ConicHullEnergy(EnergyClass):
         return
 
     def compute_swap_distances(self, idx_to_swap):
-        dists = self.nnls_OGM_gram(idx_to_swap=idx_to_swap)
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to  sampling over the norms of each datapoint
+            dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
+        else:
+            dists, _ = self.nnls_OGM_gram(idx_to_swap=idx_to_swap, returnH=False)
         if self.p is None:
             return 1.0*(dists == np.max(dists))   # mask where dists is largest
         return dists**(self.p)
@@ -342,9 +345,11 @@ class ClusteringEnergy(EnergyClass):
         return search_dists
 
     def compute_swap_distances(self, idx_to_swap):
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
+            return np.ones(self.n)
         inds_wo_t = self.indices[:]
         inds_wo_t.pop(idx_to_swap)
-        dists = self.compute_distances(inds_wo_t)
+        dists = self.compute_distances(inds_wo_t).min(axis=0).flatten()
         if self.p is None:
             return 1.*(dists == np.max(dists))
         return dists**(self.p)
@@ -352,7 +357,7 @@ class ClusteringEnergy(EnergyClass):
 
 
 
-class ClusteringEnergyFullD(EnergyClass):
+class ClusteringEnergyDense(EnergyClass):
     """
     Need to finish debugging this...
     """
@@ -364,7 +369,7 @@ class ClusteringEnergyFullD(EnergyClass):
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
         self.compute_energy()
-        print("Computing full Distance and Quality matrices up front...\n\tRecommended to only use this for search build and search/sampling swap phases...")
+        #print("Computing full Distance and Quality matrices up front...\n\tRecommended to only use this for search build and search/sampling swap phases...")
         self.D = self.compute_distances()  
         self.Q = self.D.copy()
         self.type = "cluster-dense"
@@ -384,8 +389,7 @@ class ClusteringEnergyFullD(EnergyClass):
     def swap(self, t, i):
         assert (t < len(self.indices))  and (t >= 0)
         self.indices[t] = i 
-        self.dists = self.Q[:, i]
-        np.minimum(self.dists.reshape(-1,1), self.D, out=self.Q)
+        self.dists = self.D[:,self.indices].min(axis=1).flatten()
         self.compute_energy()
         self.energy_values.append(self.energy)
     
@@ -412,16 +416,18 @@ class ClusteringEnergyFullD(EnergyClass):
         return search_dists
 
     def compute_swap_distances(self, idx_to_swap):
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
+            return np.ones(self.n)
         inds_wo_t = self.indices[:]
         inds_wo_t.pop(idx_to_swap)
-        dists = self.compute_distances(inds_wo_t)
+        dists = self.compute_distances(inds_wo_t).min(axis=0).flatten()
         if self.p is None:
             return 1.*(dists == np.max(dists))
         return dists**(self.p)
 
     def compute_C_matrix(self):
         if self.p is None:
-            p_ = 'inf'
+            p_  = np.inf
         else:
             p_ = self.p
         ns = np.argsort(self.D[:, self.indices], axis=1)

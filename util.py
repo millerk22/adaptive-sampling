@@ -8,7 +8,7 @@ from energies import *
 from sampling import *
 
 ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling", "sampling_search"]  # 
-METHODS = ALL_METHODS[:-2]   # search swap moves is taking a very long time doing all i <= k swaps....
+METHODS = ALL_METHODS[:-1]   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -89,6 +89,8 @@ def run_experiment(X, p, method_str, results, seeds, args):
                 Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
             elif args.energy == "cluster":
                 Energy = ClusteringEnergy(X, p=p)
+            elif args.energy == "cluster-dense":
+                Energy = ClusteringEnergyDense(X, p=p)
             else:
                 print(f"Energy type = {args.energy} not recognized, skipping")
                 break
@@ -126,6 +128,8 @@ def run_experiment(X, p, method_str, results, seeds, args):
                     Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
                 elif args.energy == "cluster":
                     Energy = ClusteringEnergy(X, p=p)
+                elif args.energy == "cluster-dense":
+                    Energy = ClusteringEnergyDense(X, p=p)
                 else:
                     print(f"Energy type = {args.energy} not recognized, skipping")
                     break
