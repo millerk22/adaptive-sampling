@@ -78,7 +78,7 @@ def run_experiment(X, p, method_str, results, seeds, args):
     for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
         # since search is deterministic, only need to run one test
         if i > 0:
-            if method_str in ["search", "search_search"]:
+            if method_str.split("_")[-1] == "search":  # this does include sampling_search, but for computational considerations we'll just do on the first seed.
                 continue 
         
         results[method_str]["seeds"].append(seed)
