@@ -340,8 +340,11 @@ class ClusteringEnergy(EnergyClass):
         else:
             assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
             assert self.k == len(self.indices)
-            dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
-            search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
+            if len(self.indices) == 1:
+                search_dists = [self.compute_distances(c) for c in candidates]
+            else:
+                dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
+                search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
         return search_dists
 
     def compute_swap_distances(self, idx_to_swap):
@@ -410,7 +413,7 @@ class ClusteringEnergyDense(EnergyClass):
     
     def search_distances(self, candidates, idx_to_swap=None):
         if idx_to_swap is None:
-            search_dists = np.minimum(self.D[candidates,:], self.dists.reshape(1,-1))
+            search_dists = np.minimum(self.D[candidates,:], self.dists[candidates].reshape(-1,1))
         else:
             raise ValueError("Shouldn't be using this function with 'idx_to_swap=None'... something wrong")
         return search_dists
@@ -430,6 +433,8 @@ class ClusteringEnergyDense(EnergyClass):
             p_  = np.inf
         else:
             p_ = self.p
+        if len(self.indices) == 1: # in this case, we should just be returning C \in R^{n x 1}, C(i,1) = f({x_i}), which can be computed easily from self.D
+            return  np.linalg.norm(self.D, axis=1, ord=p_).reshape(-1,1)
         ns = np.argsort(self.D[:, self.indices], axis=1)
         n = ns[:,0]
         nr = ns[:,1]

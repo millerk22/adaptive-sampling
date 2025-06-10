@@ -1,6 +1,6 @@
 import numpy as np
 import joblib
-
+from ucimlrepo import fetch_ucirepo
 from sklearn.datasets import make_blobs
 
 def load_dataset(dataset_name, n_test=500):
@@ -10,6 +10,18 @@ def load_dataset(dataset_name, n_test=500):
         X, _ = make_blobs(5*[100], n_features=200, cluster_std=0.1)
     elif dataset_name == "blobs":
         X, _ = make_blobs(5*[500], n_features=200, cluster_std=0.1)
+    elif dataset_name == "apartment":
+        data = fetch_ucirepo(id=555)
+        X = data.data.features
+        print(X.shape)
+    elif dataset_name == "news":
+        data = fetch_ucirepo(id=332)
+        X = data.data.features
+        print(X.shape)
+    elif dataset_name == "adult":
+        data = fetch_ucirepo(id=20)
+        X = data.data.features
+        print(X.shape)
     elif dataset_name == "urban":
         X = np.load("./data/urban.npz")['H'].T
         X = 1.0*X
@@ -69,13 +81,15 @@ def load_dataset(dataset_name, n_test=500):
     elif dataset_name == "articles":
         (X, _, _) = joblib.load("../topic-model-tutorial/articles-tfidf.pkl")
     elif dataset_name == "snp":
-        labels = np.load("snps/labels.npy", allow_pickle=True)
-        X = np.load("snps/data.npy", allow_pickle=True)
+        labels = np.load("./data/snps/labels.npy", allow_pickle=True)
+        X = np.load("./data/snps/data.npy", allow_pickle=True)
         ordering = np.argsort(labels)
         X, labels = X[ordering], labels[ordering]
         nan_inds = np.where(np.isnan(X))
         col_means = np.nanmean(X, axis=0)
-        X[nan_inds] = np.take(col_means, nan_inds[1]) 
+        X[nan_inds] = np.take(col_means, nan_inds[1])
+        X = X.T
+        print(X.shape, np.unique(labels).size)
     elif dataset_name == "smile":
         X, bw = smile(10000)
         print(X.shape)
