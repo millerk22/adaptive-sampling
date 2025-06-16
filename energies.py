@@ -413,7 +413,7 @@ class ClusteringEnergyDense(EnergyClass):
     
     def search_distances(self, candidates, idx_to_swap=None):
         if idx_to_swap is None:
-            search_dists = np.minimum(self.D[candidates,:], self.dists[candidates].reshape(-1,1))
+            search_dists = self.Q[:,candidates].T
         else:
             raise ValueError("Shouldn't be using this function with 'idx_to_swap=None'... something wrong")
         return search_dists
