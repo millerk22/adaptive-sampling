@@ -336,7 +336,10 @@ class ClusteringEnergy(EnergyClass):
     
     def search_distances(self, candidates, idx_to_swap=None):
         if idx_to_swap is None:
-            search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
+            if len(self.indices) > 0:
+                search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
+            else:
+                search_dists = [self.compute_distances(c) for c in candidates]
         else:
             assert (0 <= idx_to_swap) and (idx_to_swap < len(self.indices)) 
             assert self.k == len(self.indices)
