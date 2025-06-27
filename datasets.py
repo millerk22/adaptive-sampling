@@ -2,6 +2,8 @@ import numpy as np
 import joblib
 from ucimlrepo import fetch_ucirepo
 from sklearn.datasets import make_blobs
+from graphlearning.datasets import load
+from graphlearning.trainsets import generate
 
 def load_dataset(dataset_name, n_test=500):
     if dataset_name == "blobssmallest":
@@ -108,6 +110,22 @@ def load_dataset(dataset_name, n_test=500):
         X = Wtrue @ Htrue + N
         X = X.T
         X[X <= 0.0] = 0.0
+    elif dataset_name == "mnist":
+        X, labels = load("mnist", metric="vae")
+        inds = generate(labels, rate=1000, seed=42)
+        X = X[inds]
+    elif dataset_name == "mnistraw":
+        X, labels = load("mnist", metric="raw")
+        inds = generate(labels, rate=1000, seed=42)
+        X = X[inds]
+    elif dataset_name == "cifar10":
+        X, labels = load("cifar10", metric="simclr")
+        inds = generate(labels, rate=1000, seed=42)
+        X = X[inds]
+    elif dataset_name == "cifar10raw":
+        X, labels = load("cifar10", metric="raw")
+        inds = generate(labels, rate=1000, seed=42)
+        X = X[inds]
     else:
         raise ValueError(f"Dataset = {dataset_name} not recognized")
     return X.T

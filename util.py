@@ -8,7 +8,7 @@ from energies import *
 from sampling import *
 
 ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling", "sampling_search"]  # 
-METHODS = ALL_METHODS[:-1]   # search swap moves is taking a very long time doing all i <= k swaps....
+METHODS = ALL_METHODS   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -41,6 +41,8 @@ def find_methods_to_do(args, p, overwrite=[]):
                 if len(results[method_str]['seeds']) == args.numseeds:
                     already_done.append(method_str)
                 elif (method_str.split("_")[0] == "search") and (len(results[method_str]['seeds']) == 1):
+                    already_done.append(method_str)
+                elif (method_str == "sampling_search") and (len(results[method_str]['seeds']) == 1):
                     already_done.append(method_str)
                 else:
                     methods_to_do.append(method_str)
