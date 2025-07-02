@@ -3,13 +3,14 @@ import matplotlib.pyplot as plt
 import pickle
 import os
 import yaml
+from time import perf_counter
 from argparse import ArgumentParser
 
 from datasets import *
 from util import *
 
 
-def run_experiments_p(args, X, p, seeds=np.arange(42,48), overwrite=[]):
+def run_experiments_p(args, X, p, labels=None, seeds=np.arange(42,48), overwrite=[]):
 
     already_done, methods_to_do, savename, results = find_methods_to_do(args, p, overwrite)    
     
@@ -17,7 +18,34 @@ def run_experiments_p(args, X, p, seeds=np.arange(42,48), overwrite=[]):
     print("(Re-)Computing results for: ", ", ".join(methods_to_do))
     print("\tOversample methods: ", ", ".join(OVERSAMPLE_METHODS))
     print("\tOverwrite methods: ", ", ".join(overwrite))
-    print("="*40)
+
+    compute_reference = False
+    if "reference_energy" not in results and labels is not None:
+        if args.energy.split("-")[0] == "cluster": # only will compute reference energy for the cluster
+            compute_reference = True 
+            print("\tNeed to compute reference energy...")
+    print("="*60)
+
+    if compute_reference:
+        print("\nComputing reference energy...")
+        tic = perf_counter()
+        reference_inds = get_reference_inds(X.T, labels, p=p)
+        if args.energy == "cluster":
+            energy = ClusteringEnergy(X, p=p)
+        elif args.energy == "cluster-dense":
+            energy = ClusteringEnergyDense(X, p=p)
+        else:
+            raise NotImplementedError(f"Computing reference_energy for energy = '{args.energy}' not currently implemented")
+        
+        energy.init_set(reference_inds)
+        sampler = AdaptiveSampler(energy)
+        sampler.swap_phase("search", max_swaps=500)
+
+        reference_k, reference_energy = np.unique(labels).size, energy.energy
+        results['reference'] = [reference_k, reference_energy]
+        toc = perf_counter()
+        print(f"\ttime to compute = {toc -tic}\n")
+
     
     for count, method_str in enumerate(methods_to_do):
         if len(results[method_str]['energy']) == args.numseeds:
@@ -26,7 +54,7 @@ def run_experiments_p(args, X, p, seeds=np.arange(42,48), overwrite=[]):
 
         print(f"Overall Method = {method_str}, {count+1}/{len(methods_to_do)}")
         
-        results = run_experiment(X, p, method_str, results, seeds, args)
+        results = run_experiment(X, p, labels, method_str, results, seeds, args)
 
         if args.save:
             print(f"Saving (intermediate) results to file {savename}...")
@@ -91,7 +119,7 @@ if __name__ == "__main__":
     assert args.energy in IMPLEMENTED_ENERGIES
 
     # load dataset and run test for the corresponding experiment name
-    X = load_dataset(args.dataset, n_test=args.ntest)
+    X, labels = load_dataset(args.dataset, n_test=args.ntest)
 
     if args.dataset == "test":
         args.dataset = "test" + str(args.ntest)
@@ -102,10 +130,10 @@ if __name__ == "__main__":
     
     for p in args.powers:
         print()
-        print("=================================================")
+        print("="*60)
         print(f"================== p = {p}, energy_type = {args.energy} =======================")
-        print("=================================================")
+        print("="*60)
         if p == "None":
             p = None
 
-        run_experiments_p(args, X, p, seeds=np.arange(42,42+args.numseeds), overwrite=overwrite_methods)
+        run_experiments_p(args, X, p, labels=labels, seeds=np.arange(42,42+args.numseeds), overwrite=overwrite_methods)

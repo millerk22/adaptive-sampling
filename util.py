@@ -7,6 +7,10 @@ from collections import defaultdict
 from energies import *
 from sampling import *
 
+from sklearn.metrics import pairwise_distances
+from scipy.optimize import minimize
+
+
 ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling", "sampling_search"]  # 
 METHODS = ALL_METHODS   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
@@ -64,7 +68,7 @@ Need to have the experiments run build phase and swap phase separately, since fo
     figuring out the swaps for each 1<= i <= k, not just always doing the k build and then swaps.
 """
 
-def run_experiment(X, p, method_str, results, seeds, args):
+def run_experiment(X, p, labels, method_str, results, seeds, args):
     if len(method_str.split("_")) == 2:
         build_method, swap_method = method_str.split("_")
     else:
@@ -157,3 +161,72 @@ def run_experiment(X, p, method_str, results, seeds, args):
                 results[method_str]["times"].append(times_swap)
 
     return results 
+
+
+
+
+
+# Code to perform analogue of Lloyd's algorithm for p >= 1 (not just p = 2) in Clustering cas
+
+def euclidean_p_center(points, p, tol=1e-4):
+    def objective(c):
+        diff = points - c
+        dists = np.linalg.norm(diff, axis=1)
+        if p is not None:
+            return np.sum(dists**p)
+        return dists[np.argmax(dists)]
+    
+    c0 = np.mean(points, axis=0)  # initial guess
+    result = minimize(objective, c0, method='L-BFGS-B', tol=tol)
+    return result.x
+
+def euclidean_p_kmeans(X, centers=None, p=2, k=10, max_iter=100, tol=1e-4):
+    n, d = X.shape
+    if centers is None:
+        centers = X[np.random.choice(n, k, replace=False)]
+    else:
+        k = centers.shape[0]
+
+    for _ in range(max_iter):
+        # Assignment step: distances^p using Euclidean norm (M step)
+        D = pairwise_distances(X, centers, metric='euclidean')
+        labels = np.argmin(D, axis=1)
+
+        # Update centers step (E step)
+        new_centers = []
+        for l in range(k):
+            cluster_points = X[labels == l]
+            if len(cluster_points) == 0:
+                new_centers.append(X[np.random.choice(n)])
+            else:
+                c_l = euclidean_p_center(cluster_points, p)
+                new_centers.append(c_l)
+        new_centers = np.vstack(new_centers)
+
+        shift = np.linalg.norm(new_centers - centers)
+        centers = new_centers
+        if shift < tol:
+            break
+
+    return centers, labels
+
+
+def get_reference_inds(X, labels, p=2):
+    k = np.unique(labels).size 
+
+    # get initial centroids from ground truth labelings 
+    mus = []
+    for i in np.unique(labels):
+        i_inds = np.where(labels == i)[0].tolist()
+        mu = euclidean_p_center(X[i_inds], p=p)
+        mus.append(mu)
+    
+    # iterate with Lloyd's algorithm to further refine centroids
+    centers_p, labels_p = euclidean_p_kmeans(X, centers=np.array(mus), p=p)
+    reference_inds = []
+    for i in np.unique(labels_p):
+        i_inds = np.where(labels_p == i)[0]
+
+        # choose the point that is closest each centroid to represent it in our reference_indices
+        reference_inds.append(i_inds[np.argmin(pairwise_distances(X[i_inds], centers_p[i,:].reshape(1,-1)))]) 
+    return reference_inds
