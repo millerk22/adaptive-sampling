@@ -135,14 +135,14 @@ def load_dataset(dataset_name, n_test=500):
         labels = labels[inds]
     elif dataset_name == "mnistsc":
         X, labels = load("mnist", metric="raw")
-        W = wm.knn(X, k=30, normalize=True)
+        W = wm.knn(X, k=30)
         G = graph(W)
-        _, evecs = G.eigen_decomp(k=15)
+        print(f"Warning... Computing eigenvectors for {G.num_nodes}-nodes graph")
+        _, evecs = G.eigen_decomp(k=15, method='lowrank')
         X_ = evecs[:,1:]
         inds = generate(labels, rate=1000, seed=42)
         X = X_[inds]
         labels = labels[inds]
-        
     elif dataset_name == "mnistraw":
         X, labels = load("mnist", metric="raw")
         inds = generate(labels, rate=1000, seed=42)
@@ -155,9 +155,10 @@ def load_dataset(dataset_name, n_test=500):
         labels = labels[inds]
     elif dataset_name == "cifar10sc":
         X, labels = load("cifar10", metric="raw")
-        W = wm.knn(X, k=30, normalize=True)
+        W = wm.knn(X, k=30)
         G = graph(W)
-        _, evecs = G.eigen_decomp(k=15)
+        print(f"Warning... Computing eigenvectors for {G.num_nodes}-nodes graph")
+        _, evecs = G.eigen_decomp(k=15, method='lowrank')
         X_ = evecs[:,1:]
         inds = generate(labels, rate=1000, seed=42)
         X = X_[inds]
