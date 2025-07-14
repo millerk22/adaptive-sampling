@@ -45,6 +45,8 @@ def run_experiments_p(args, X, p, labels=None, seeds=np.arange(42,48), overwrite
         results['reference'] = [reference_k, reference_energy]
         toc = perf_counter()
         print(f"\ttime to compute = {toc -tic}\n")
+        with open(savename, 'wb') as rfile:
+            pickle.dump(results, rfile)
 
     
     for count, method_str in enumerate(methods_to_do):
