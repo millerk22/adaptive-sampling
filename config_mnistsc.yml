@@ -1,0 +1,8 @@
+dataset: mnistsc
+k: 20
+k_oversample: 50
+energy: cluster-dense
+time: 1
+numseeds: 10
+powers: [1, 2, 3, 5, None]
+

@@ -4,6 +4,8 @@ from ucimlrepo import fetch_ucirepo
 from sklearn.datasets import make_blobs
 from graphlearning.datasets import load
 from graphlearning.trainsets import generate
+from graphlearning import weightmatrix as wm
+from graphlearning import graph
 
 def load_dataset(dataset_name, n_test=500):
     if dataset_name == "blobssmallest":
@@ -131,6 +133,16 @@ def load_dataset(dataset_name, n_test=500):
         inds = generate(labels, rate=1000, seed=42)
         X = X[inds]
         labels = labels[inds]
+    elif dataset_name == "mnistsc":
+        X, labels = load("mnist", metric="raw")
+        W = wm.knn(X, k=30, normalize=True)
+        G = graph(W)
+        _, evecs = G.eigen_decomp(k=15)
+        X_ = evecs[:,1:]
+        inds = generate(labels, rate=1000, seed=42)
+        X = X_[inds]
+        labels = labels[inds]
+        
     elif dataset_name == "mnistraw":
         X, labels = load("mnist", metric="raw")
         inds = generate(labels, rate=1000, seed=42)
@@ -140,6 +152,15 @@ def load_dataset(dataset_name, n_test=500):
         X, labels = load("cifar10", metric="simclr")
         inds = generate(labels, rate=1000, seed=42)
         X = X[inds]
+        labels = labels[inds]
+    elif dataset_name == "cifar10sc":
+        X, labels = load("cifar10", metric="raw")
+        W = wm.knn(X, k=30, normalize=True)
+        G = graph(W)
+        _, evecs = G.eigen_decomp(k=15)
+        X_ = evecs[:,1:]
+        inds = generate(labels, rate=1000, seed=42)
+        X = X_[inds]
         labels = labels[inds]
     elif dataset_name == "cifar10raw":
         X, labels = load("cifar10", metric="raw")
