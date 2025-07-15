@@ -149,12 +149,12 @@ def load_dataset(dataset_name, n_test=500):
         X = X[inds]
         labels = labels[inds]
     elif dataset_name == "cifar10":
-        X, labels = load("cifar10", metric="simclr")
+        X, labels = load("cifar", metric="simclr")
         inds = generate(labels, rate=1000, seed=42)
         X = X[inds]
         labels = labels[inds]
     elif dataset_name == "cifar10sc":
-        X, labels = load("cifar10", metric="raw")
+        X, labels = load("cifar", metric="raw")
         W = wm.knn(X, k=30)
         G = graph(W)
         print(f"Warning... Computing eigenvectors for {G.num_nodes}-nodes graph")
@@ -164,7 +164,7 @@ def load_dataset(dataset_name, n_test=500):
         X = X_[inds]
         labels = labels[inds]
     elif dataset_name == "cifar10raw":
-        X, labels = load("cifar10", metric="raw")
+        X, labels = load("cifar", metric="raw")
         inds = generate(labels, rate=1000, seed=42)
         X = X[inds]
         labels = labels[inds]
