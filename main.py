@@ -19,35 +19,6 @@ def run_experiments_p(args, X, p, labels=None, seeds=np.arange(42,48), overwrite
     print("\tOversample methods: ", ", ".join(OVERSAMPLE_METHODS))
     print("\tOverwrite methods: ", ", ".join(overwrite))
 
-    compute_reference = False
-    if "reference_energy" not in results and labels is not None:
-        if args.energy.split("-")[0] == "cluster": # only will compute reference energy for the cluster
-            compute_reference = True 
-            print("\tNeed to compute reference energy...")
-    print("="*60)
-
-    if compute_reference:
-        print("\nComputing reference energy...")
-        tic = perf_counter()
-        reference_inds = get_reference_inds(X.T, labels, p=p)
-        if args.energy == "cluster":
-            energy = ClusteringEnergy(X, p=p)
-        elif args.energy == "cluster-dense":
-            energy = ClusteringEnergyDense(X, p=p)
-        else:
-            raise NotImplementedError(f"Computing reference_energy for energy = '{args.energy}' not currently implemented")
-        
-        energy.init_set(reference_inds)
-        sampler = AdaptiveSampler(energy)
-        sampler.swap_phase("search", max_swaps=500)
-
-        reference_k, reference_energy = np.unique(labels).size, energy.energy
-        results['reference'] = [reference_k, reference_energy]
-        toc = perf_counter()
-        print(f"\ttime to compute = {toc -tic}\n")
-        with open(savename, 'wb') as rfile:
-            pickle.dump(results, rfile)
-
     
     for count, method_str in enumerate(methods_to_do):
         if len(results[method_str]['energy']) == args.numseeds:

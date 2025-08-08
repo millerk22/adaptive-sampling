@@ -1,7 +1,7 @@
 import numpy as np
 import joblib
 from ucimlrepo import fetch_ucirepo
-from sklearn.datasets import make_blobs
+from sklearn.datasets import make_blobs, load_iris, load_digits, load_wine, load_breast_cancer
 from graphlearning.datasets import load
 from graphlearning.trainsets import generate
 from graphlearning import weightmatrix as wm
@@ -29,6 +29,14 @@ def load_dataset(dataset_name, n_test=500):
         X = data.data.features
         labels = data.data.targets
         print(X.shape)
+    elif dataset_name == "iris":
+        X, labels = load_iris(return_X_y=True)
+    elif dataset_name == "digits":
+        X, labels = load_digits(return_X_y=True)
+    elif dataset_name == "wine":
+        X, labels = load_wine(return_X_y=True)
+    elif dataset_name == "breastcancer":
+        X, labels = load_breast_cancer(return_X_y=True)
     elif dataset_name == "urban":
         data = np.load("./data/urban.npz")
         X = data['H'].T

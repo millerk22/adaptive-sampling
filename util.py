@@ -46,8 +46,8 @@ def find_methods_to_do(args, p, overwrite=[]):
                     already_done.append(method_str)
                 elif (method_str.split("_")[0] == "search") and (len(results[method_str]['seeds']) == 1):
                     already_done.append(method_str)
-                elif (method_str == "sampling_search") and (len(results[method_str]['seeds']) == 1):
-                    already_done.append(method_str)
+                # elif (method_str == "sampling_search") and (len(results[method_str]['seeds']) == 1):
+                #     already_done.append(method_str)
                 else:
                     methods_to_do.append(method_str)
             else:
@@ -85,7 +85,8 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
         # since search is deterministic, only need to run one test
         if i > 0:
             if method_str.split("_")[-1] == "search":  # this does include sampling_search, but for computational considerations we'll just do on the first seed.
-                continue 
+                if method_str != "sampling_search":
+                    continue 
         
         results[method_str]["seeds"].append(seed)
 
@@ -145,7 +146,8 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
 
                 # instantiate adaptive sampler
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                sampler.swap_phase(method=swap_method, max_swaps=k_**2)
+                max_swaps = k_**2 if Energy.type == "conic" else 20*k_**2
+                sampler.swap_phase(method=swap_method, max_swaps=max_swaps)
 
                 indices_swap.append(Energy.indices)
                 energy_swap.append(Energy.energy)
