@@ -39,19 +39,21 @@ def load_dataset(dataset_name, n_test=500):
         X, labels = load_breast_cancer(return_X_y=True)
     elif dataset_name == "urban":
         data = np.load("./data/urban.npz")
-        X = data['H'].T
+        X = data['H']
         X = 1.0*X
         X -= min(0.0, X.min())
         X /= np.max(np.max(X))
+        X /= np.linalg.norm(X, axis=1).reshape(-1, 1)
         labels = data['labels']
 
     elif dataset_name == "urbansub":
         data = np.load("./data/urban.npz")
-        X = data['H'].T
+        X = data['H']
         labels = data['labels']
         X = 1.0*X
         X -= min(0.0, X.min())
         X /= np.max(np.max(X))
+        X /= np.linalg.norm(X, axis=1).reshape(-1, 1)
         rstate = np.random.RandomState(42)
         subset = rstate.choice(X.shape[0], 7500, replace=False)
         print(X.shape)
@@ -69,6 +71,7 @@ def load_dataset(dataset_name, n_test=500):
         X = 1.0 * X
         X -= min(0.0, X.min())
         X /= np.max(np.max(X))
+        X /= np.linalg.norm(X, axis=1).reshape(-1, 1)
         labels = labels[mask]
         print(X.min(), X.max())
         print(X.shape)
@@ -82,6 +85,7 @@ def load_dataset(dataset_name, n_test=500):
         X = 1.0 * X
         X -= min(0.0, X.min())
         X /= np.max(np.max(X))
+        X /= np.linalg.norm(X, axis=1).reshape(-1, 1)
         print(X.shape)
         labels = labels[mask]
     
@@ -96,12 +100,12 @@ def load_dataset(dataset_name, n_test=500):
         X = 1.0 * X
         X -= min(0.0, X.min())
         X /= np.max(np.max(X))
+        X /= np.linalg.norm(X, axis=1).reshape(-1, 1)
         rstate = np.random.RandomState(42)
         subset = rstate.choice(X.shape[0], 5000, replace=False)
         print(X.shape)
         X = X[subset]
         print(X.shape)
-        print(np.unique(labels[mask]))
         labels = labels[subset]
     
     elif dataset_name == "snp":

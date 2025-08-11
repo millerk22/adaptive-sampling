@@ -11,7 +11,7 @@ from sklearn.metrics import pairwise_distances
 from scipy.optimize import minimize
 
 
-ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling", "sampling_search"]  # 
+ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"]#, "sampling_search"]  # 
 METHODS = ALL_METHODS   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
@@ -168,7 +168,7 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
 
 
 
-# Code to perform analogue of Lloyd's algorithm for p >= 1 (not just p = 2) in Clustering cas
+# Code to perform analogue of Lloyd's algorithm for p >= 1 (not just p = 2) in Clustering case
 
 def euclidean_p_center(points, p, tol=1e-4):
     def objective(c):
