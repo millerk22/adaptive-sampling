@@ -129,7 +129,9 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
             energy_swap = []
             energy_values_swap = []
             times_swap = []
-            for k_ in range(1, args.k+1):
+            cycles_swap = []
+
+            for k_ in tqdm(range(1, args.k+1), total=args.k, desc=f"Performing swaps for each of 1 to {args.k} points..."):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
                     Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
@@ -154,10 +156,15 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                 energy_values_swap.append(Energy.energy_values)
                 if args.time:
                     times_swap.append(sampler.times)
+                
+                if swap_method == "search":
+                    cycles_swap.append(sampler.num_cycles)
 
             results[method_str]["indices"].append(indices_swap)
             results[method_str]["energy"].append(energy_swap)
             results[method_str]["energy_values"].append(energy_values_swap)
+            if swap_method == "search":
+                results[method_str]["num_cycles"].append(cycles_swap)
             if args.time:
                 # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
                 results[method_str]["times"].append(times_swap)

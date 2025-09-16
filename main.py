@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     
     overwrite_methods = []
-    args.powers = [1, 2, None]
+    args.powers = [1, 2, 5, None]
 
     if args.dataset == "test":
         overwrite_methods = [] 

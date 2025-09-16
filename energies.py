@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.sparse as sps
-from sklearn.metrics.pairwise import euclidean_distances
+from scipy.spatial.distance import pdist, cdist, squareform
 from sklearn.metrics.pairwise import rbf_kernel
 from joblib import Parallel, delayed, parallel_backend
 from tqdm import tqdm 
@@ -80,6 +80,8 @@ class EnergyClass(object):
     def compute_swap_distances(self, idx_to_swap):
         return NotImplementedError()
     
+    def compute_eager_swap_values(self, idx):
+        return NotImplementedError()
     
 
 
@@ -162,7 +164,20 @@ class ConicHullEnergy(EnergyClass):
             search_dists = [self.nnls_OGM_gram(search_ind=c, idx_to_swap=idx_to_swap, returnH=False)[0] for c in iterator]
         
         
-        return search_dists 
+        
+        return np.array(search_dists) 
+
+    def compute_eager_swap_values(self, idx):
+        if idx in self.indices:
+            return np.ones(len(self.indices))*self.energy*(1.0000001)
+        r = np.hstack([self.nnls_OGM_gram(search_ind=idx, idx_to_swap=j, returnH=False)[0].reshape(-1, 1) \
+                      for j in range(len(self.indices))])
+        if self.p is None:
+            r = np.max(r, axis=0)
+        else:
+            r = np.linalg.norm(r, axis=0, ord=self.p)
+        return r
+        
     
 
     def nnls_OGM_gram(self, search_ind=None, idx_to_swap=None, delta=1e-6, maxiter=500, lam=1.0, returnH=True, verbose=False, term_cond=1):
@@ -180,6 +195,7 @@ class ConicHullEnergy(EnergyClass):
                 H0[:-1,:] = self.H[:len(self.indices),:].copy()
         
         S_ind_all = self.indices[:]
+
         if idx_to_swap is not None:
             if search_ind is not None:
                 S_ind_all[idx_to_swap] = search_ind 
@@ -188,7 +204,6 @@ class ConicHullEnergy(EnergyClass):
         else:
             if search_ind is not None:
                 S_ind_all = S_ind_all + [search_ind]
-        
         
         if len(self.indices) == 0: # case of first iteration
             G_S = self.X[:, S_ind_all].T @ self.X
@@ -264,9 +279,12 @@ class ConicHullEnergy(EnergyClass):
         dist_vals[dist_vals < 0] = 0.0
         dist_vals = np.sqrt(dist_vals / self.Xfro_norm2)    # we consider Euclidean distances and divide by Fro norm of X to 
                                                             # keep values from being too large with high-dimensional datasets
-        if verbose:
-            return {"dist_vals":dist_vals, "iters":i, "eps":eps, "eps0":eps0, "EPS":EPS }, H
+        # if verbose:
+        #     return {"dist_vals":dist_vals, "iters":i, "eps":eps, "eps0":eps0, "EPS":EPS }, H
 
+        if verbose:
+            with open(f"./results/conic_hull_energy_log_{self.n}.txt", "a") as f:
+                f.write(f"{len(self.indices)},{self.k},{i}\n")
         if returnH:
             return dist_vals, H 
         
@@ -324,11 +342,13 @@ class ClusteringEnergy(EnergyClass):
     
     def compute_distances(self, inds):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
-            dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                       squared=False).flatten()
+            # dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
+            #                            squared=False).flatten()
+            dists = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
         elif type(inds) == list:
-            dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                         X_norm_squared=self.x_squared_norms[inds], squared=False)
+            #dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+                                        #  X_norm_squared=self.x_squared_norms[inds], squared=False)
+            dists = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
         else:
             raise ValueError(f"inds must be of type `int` or `list`")
         
@@ -348,7 +368,7 @@ class ClusteringEnergy(EnergyClass):
             else:
                 dists_wo_st = np.min(np.vstack((self.D[:idx_to_swap,:], self.D[idx_to_swap+1:,:])), axis=0) 
                 search_dists = [np.minimum(dists_wo_st, self.compute_distances(c)) for c in candidates]
-        return search_dists
+        return np.array(search_dists)
 
     def compute_swap_distances(self, idx_to_swap):
         if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
@@ -359,6 +379,9 @@ class ClusteringEnergy(EnergyClass):
         if self.p is None:
             return 1.*(dists == np.max(dists))
         return dists**(self.p)
+    
+    def compute_eager_swap_values(self, idx):
+        raise NotImplementedError("Not implemented yet...")
 
 
 
@@ -401,14 +424,18 @@ class ClusteringEnergyDense(EnergyClass):
     
     def compute_distances(self, inds=None):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
-            dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                       squared=False).flatten()
+            # dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
+            #                            squared=False).flatten()
+            dists = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
         elif type(inds) == list:
-            dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                         X_norm_squared=self.x_squared_norms[inds], squared=False)
+            # dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+            #                              X_norm_squared=self.x_squared_norms[inds], squared=False)
+            dists = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
         elif inds is None:
-            dists = euclidean_distances(self.X.T, self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                         X_norm_squared=self.x_squared_norms, squared=False)
+            # dists = euclidean_distances(self.X.T, self.X.T, Y_norm_squared=self.x_squared_norms, \
+            #                              X_norm_squared=self.x_squared_norms, squared=False)
+
+            dists = squareform(pdist(self.X.T, metric='euclidean'))
         else:
             raise ValueError(f"inds must be of type `int` or `list`")
         
@@ -418,7 +445,7 @@ class ClusteringEnergyDense(EnergyClass):
         if idx_to_swap is None:
             search_dists = self.Q[:,candidates].T
         else:
-            raise ValueError("Shouldn't be using this function with 'idx_to_swap=None'... something wrong")
+            raise ValueError("Shouldn't be using this function unless 'idx_to_swap=None'... something wrong")
         return search_dists
 
     def compute_swap_distances(self, idx_to_swap):
@@ -426,10 +453,22 @@ class ClusteringEnergyDense(EnergyClass):
             return np.ones(self.n)
         inds_wo_t = self.indices[:]
         inds_wo_t.pop(idx_to_swap)
-        dists = self.compute_distances(inds_wo_t).min(axis=0).flatten()
+        dists = self.D[:,inds_wo_t].min(axis=1).flatten()
         if self.p is None:
             return 1.*(dists == np.max(dists))
         return dists**(self.p)
+    
+    def compute_eager_swap_values(self, idx):
+        dists = self.D[:,self.indices]
+        d = self.D[:,idx].reshape(-1,1)
+        a = np.minimum()
+        r = np.hstack([np.min(np.hstack((dists[:,list(range(j))+list(range(j+1,len(self.indices)))], d)), axis=1).reshape(-1,1) \
+                        for j in range(len(self.indices))]).reshape(self.n, len(self.indices))
+        if self.p is None:
+            r = np.max(r, axis=0)
+        else:
+            r = np.linalg.norm(r, axis=0, ord=self.p)
+        return r 
 
     def compute_C_matrix(self):
         if self.p is None:

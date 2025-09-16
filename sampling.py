@@ -48,6 +48,8 @@ class AdaptiveSampler(object):
         assert method in ["search", "sampling"]
         k = len(self.Energy.indices)
         n = self.Energy.n
+        self.num_cycles = None
+
         if max_swaps is None:
             max_swaps = k**2
 
@@ -57,11 +59,46 @@ class AdaptiveSampler(object):
             dists_vals = [self.Energy.dists.copy()]
 
         if method == "search": # adaptive-search swap
-            swap_flag = True 
-            count = 0
-            while swap_flag:
+            t, counter = 0, 0
+            self.num_cycles = 0
+            while counter < n:
                 if self.report_timing:
                     tic = perf_counter()
+                
+                # construct the eager swap vector, r_S/t
+                r = self.Energy.compute_eager_swap_values(idx=t) 
+                assert r.size == k
+
+                # select one of the minimizers
+                j_poss = np.where(r == np.min(r))[0]
+                jstar = j_poss[self.random_state.choice(len(j_poss))]
+
+                if self.report_timing:
+                    toc = perf_counter()
+                    self.times.append(toc-tic)
+                
+                # if minimum swap value improves the current energy, then perform the swap and update counter
+                if r[jstar] < self.Energy.energy:
+                    self.Energy.swap(jstar, t)
+                    counter = 0
+                else:
+                    counter += 1
+                
+                # update index
+                t += 1 
+                t = t % n
+                if t == 0:
+                    self.num_cycles += 1
+                    # print("cycle", self.num_cycles, "counter", counter)
+
+
+
+        elif method == "searchold":
+            count = 0
+            for u in range(max_swaps):
+                if self.report_timing:
+                    tic = perf_counter()
+                t = u % k
                 
                 if self.Energy.type in ["conic", "cluster"]:
                     C = np.zeros((n, k))
@@ -94,7 +131,6 @@ class AdaptiveSampler(object):
                 count += 1
                 if count > max_swaps:
                     break
-                
         else:
             # adaptive-sampling swap 
             check_change_flag = False
