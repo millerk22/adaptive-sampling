@@ -315,35 +315,7 @@ class LowRankEnergyDense(EnergyClass):
         
     def set_k(self, k):
         super().set_k(k)
-        
-    def add(self, i):
-        self.indices.append(i)
-        if len(self.indices) == 1:
-            # when adding the first index, we just set dists to be the distances to that point
-            self.dists = self.D[:,i].copy()
-            self.h = np.zeros((self.n,))
-        else:
-            # when adding subsequent indices, we need to update dists and q2
-            mask = self.D[:,i] < self.dists 
-            if self.q2 is None:
-                # when have only 2 indices, we can simply calculate q2 in terms of mask and dists
-                self.q2 = self.dists.copy()  
-                self.q2[~mask] = self.D[~mask,i].copy()
-            else:
-                # when have more than 2 indices, we use another mask to consider the case when d_i is less than q2,
-                # necessitating an update of q2 on these indices
-                mask2 = ~mask & (self.D[:,i] < self.q2)
-                self.q2[mask2] = self.D[mask2, i].copy()
-            
-            # update of h and dists only happens where mask is true. Do this after the update to q2 since we might need to use 
-            # old value of dists to update q2
-            self.h[mask] = len(self.indices) - 1
-            self.dists[mask] = self.D[mask,i].copy()
-
-        # compute the energy            
-        self.compute_energy()
-        self.energy_values.append(self.energy)
-        return 
+    
     def add(self, i):
         if self.kernel is None:
             g = self.X.T @ self.X[:,i].flatten()
