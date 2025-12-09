@@ -12,7 +12,6 @@ from scipy.optimize import minimize
 
 
 ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"]#, "sampling_search"]  # 
-METHODS = ALL_METHODS   # search swap moves is taking a very long time doing all i <= k swaps....
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
@@ -29,6 +28,13 @@ def find_methods_to_do(args, p, overwrite=[]):
         if os.path.exists(savename):
             with open(savename, "rb") as f:
                 results = pickle.load(f)
+
+    if args.config.split("_")[-1].split(".")[0] == "other":
+        print(args.config)
+        print("Changing METHODS to only ['sampling', 'sampling_sampling']")
+        METHODS = ["sampling", "sampling_sampling"]
+    else:
+        METHODS = ALL_METHODS
 
     if results is None:
         results = {s : defaultdict(list) for s in METHODS}
@@ -85,8 +91,7 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
         # since search is deterministic, only need to run one test
         if i > 0:
             if method_str.split("_")[-1] == "search":  # this does include sampling_search, but for computational considerations we'll just do on the first seed.
-                if method_str != "sampling_search":
-                    continue 
+                continue 
         
         results[method_str]["seeds"].append(seed)
 
@@ -130,6 +135,8 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
             energy_values_swap = []
             times_swap = []
             cycles_swap = []
+            num_actual_swaps = []
+            num_forced_swaps, swap_force_probs, forced_iters = [], [], []
 
             for k_ in tqdm(range(1, args.k+1), total=args.k, desc=f"Performing swaps for each of 1 to {args.k} points..."):
                 # Instantiate an Energy object for this test
@@ -148,21 +155,37 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
 
                 # instantiate adaptive sampler
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                max_swaps = k_**2 if Energy.type == "conic" else 20*k_**2
-                sampler.swap_phase(method=swap_method, max_swaps=max_swaps)
+                max_swaps = k_**2 #if Energy.type == "conic" else 20*k_**2
 
-                indices_swap.append(Energy.indices)
-                energy_swap.append(Energy.energy)
-                energy_values_swap.append(Energy.energy_values)
-                if args.time:
-                    times_swap.append(sampler.times)
+                if k_ > 1:
+                    _ = sampler.swap_phase(method=swap_method, max_swaps=max_swaps, debug=True)
+                    if args.time:
+                        times_swap.append(sampler.times)
+                    
+                    if swap_method == "search":
+                        cycles_swap.append(sampler.num_cycles)
+
+                indices_swap.append(sampler.Energy.indices)
+                energy_swap.append(sampler.Energy.energy)
+                if hasattr(sampler, "best_energy_vals"):
+                    energy_values_swap.append(sampler.best_energy_vals)
+                else:
+                    energy_values_swap.append(sampler.Energy.energy_values)
                 
-                if swap_method == "search":
-                    cycles_swap.append(sampler.num_cycles)
+                if hasattr(sampler, "num_forced_swaps"):
+                    num_forced_swaps.append(sampler.num_forced_swaps)
+                    swap_force_probs.append(sampler.swap_force_probs)
+                    forced_iters.append(sampler.forced_iters)
+
 
             results[method_str]["indices"].append(indices_swap)
             results[method_str]["energy"].append(energy_swap)
             results[method_str]["energy_values"].append(energy_values_swap)
+            if len(num_forced_swaps) > 0:
+                results[method_str]["num_forced_swaps"].append(num_forced_swaps)
+                results[method_str]["swap_force_probs"].append(swap_force_probs)
+                results[method_str]["forced_iters"].append(forced_iters)
+                results[method_str]["num_actual_swaps"].append(sampler.num_actual_swaps)
             if swap_method == "search":
                 results[method_str]["num_cycles"].append(cycles_swap)
             if args.time:

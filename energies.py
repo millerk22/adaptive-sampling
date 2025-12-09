@@ -293,6 +293,102 @@ class ConicHullEnergy(EnergyClass):
 
 
 
+class LowRankEnergyDense(EnergyClass):
+    """
+    NOT IMPLEMENTED CURRENTLY
+    """
+    def __init__(self, X, p=2):
+        super().__init__(X, p=p)
+        self.d, self.n = self.X.shape
+        if self.n >= FLOAT_THRESHOLD:
+            self.X = self.X.astype(np.float32)
+        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
+        self.dists = np.max(self.x_squared_norms)*np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
+        self.compute_energy()
+        self.D = self.compute_distances()  
+        self.q2 = None 
+        self.h = None
+        self.type = "lowrank-dense"
+        self.W = np.zeros((self.n, self.k))
+        self.dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
+        self.energy = self.dists.sum()
+        
+    def set_k(self, k):
+        super().set_k(k)
+        
+    def add(self, i):
+        self.indices.append(i)
+        if len(self.indices) == 1:
+            # when adding the first index, we just set dists to be the distances to that point
+            self.dists = self.D[:,i].copy()
+            self.h = np.zeros((self.n,))
+        else:
+            # when adding subsequent indices, we need to update dists and q2
+            mask = self.D[:,i] < self.dists 
+            if self.q2 is None:
+                # when have only 2 indices, we can simply calculate q2 in terms of mask and dists
+                self.q2 = self.dists.copy()  
+                self.q2[~mask] = self.D[~mask,i].copy()
+            else:
+                # when have more than 2 indices, we use another mask to consider the case when d_i is less than q2,
+                # necessitating an update of q2 on these indices
+                mask2 = ~mask & (self.D[:,i] < self.q2)
+                self.q2[mask2] = self.D[mask2, i].copy()
+            
+            # update of h and dists only happens where mask is true. Do this after the update to q2 since we might need to use 
+            # old value of dists to update q2
+            self.h[mask] = len(self.indices) - 1
+            self.dists[mask] = self.D[mask,i].copy()
+
+        # compute the energy            
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+        return 
+    def add(self, i):
+        if self.kernel is None:
+            g = self.X.T @ self.X[:,i].flatten()
+        else:
+            g = self.kernel(self.X[i,:].reshape(1,-1), self.X).flatten()
+        if self.k_sel > 0:
+            g -= self.F[:,:self.k_sel] @ self.F[i, :self.k_sel]
+        if np.isclose(g[i], 0) or g[i] < 0:
+            print(f"Iter = {self.k_sel+1}, g[i] approx 0, exiting...")
+            self.k_sel += 1
+            return 
+        self.F[:,self.k_sel] = g / np.sqrt(g[i])
+        self.dists -= self.F[:,self.k_sel]**2.
+        self.energy = self.dists.sum()
+        self.indices.append(i)
+        self.k_sel += 1
+        self.energy_values.append(self.energy)
+        return
+    
+
+    def swap(self, t, i):
+        return 
+    
+    def compute_distances(self, inds=None):
+        
+        return 
+    
+    def search_distances(self, candidates, idx_to_swap=None):
+        
+        return #search_dists
+
+    def compute_swap_distances(self, idx_to_swap):
+        
+        return #dists**(self.p)
+    
+    def compute_eager_swap_values(self, idx):
+        return #r 
+
+    
+
+
+
+
+
+
 
 ######################################
 ############# NEED TO BE UPDATED #######
@@ -344,15 +440,15 @@ class ClusteringEnergy(EnergyClass):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
             # dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
             #                            squared=False).flatten()
-            dists = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
+            distances = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
         elif type(inds) == list:
             #dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
                                         #  X_norm_squared=self.x_squared_norms[inds], squared=False)
-            dists = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
+            distances = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
         else:
             raise ValueError(f"inds must be of type `int` or `list`")
         
-        return dists 
+        return distances 
     
     def search_distances(self, candidates, idx_to_swap=None):
         if idx_to_swap is None:
@@ -384,9 +480,175 @@ class ClusteringEnergy(EnergyClass):
         raise NotImplementedError("Not implemented yet...")
 
 
-
+'''
+self.dists = q_S vector from the paper
+'''
 
 class ClusteringEnergyDense(EnergyClass):
+    def __init__(self, X, p=2):
+        super().__init__(X, p=p)
+        self.d, self.n = self.X.shape
+        if self.n >= FLOAT_THRESHOLD:
+            self.X = self.X.astype(np.float32)
+        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
+        self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
+        self.compute_energy()
+        self.D = self.compute_distances()  
+        self.q2 = None 
+        self.h = None
+        self.type = "cluster-dense"
+    
+    def set_k(self, k):
+        super().set_k(k)
+        
+    def add(self, i):
+        self.indices.append(i)
+        if len(self.indices) == 1:
+            # when adding the first index, we just set dists to be the distances to that point
+            self.dists = self.D[:,i].copy()
+            self.h = np.zeros((self.n,))
+        else:
+            # when adding subsequent indices, we need to update dists and q2
+            mask = self.D[:,i] < self.dists 
+            if self.q2 is None:
+                # when have only 2 indices, we can simply calculate q2 in terms of mask and dists
+                self.q2 = self.dists.copy()  
+                self.q2[~mask] = self.D[~mask,i].copy()
+            else:
+                # when have more than 2 indices, we use another mask to consider the case when d_i is less than q2,
+                # necessitating an update of q2 on these indices
+                mask2 = ~mask & (self.D[:,i] < self.q2)
+                self.q2[mask2] = self.D[mask2, i].copy()
+            
+            # update of h and dists only happens where mask is true. Do this after the update to q2 since we might need to use 
+            # old value of dists to update q2
+            self.h[mask] = len(self.indices) - 1
+            self.dists[mask] = self.D[mask,i].copy()
+
+        # compute the energy            
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+        return 
+    
+
+    def swap(self, t, i):
+        # case of self.q2 is None is currently handled
+        assert (t < len(self.indices))  and (t >= 0)
+        Vor_mask = self.h == t # in the Voronoi cell of the point being swapped out
+        mask1 = self.D[:,i] < self.dists 
+        mask2 = self.D[:,i] < self.q2 
+        notVor1 = ~Vor_mask & mask1 # outside t's Voronoi cell and d_i(j) < q_S(j)
+        notVor2 = ~Vor_mask & ~mask1 & mask2 # outside t's Voronoi cell and q_S(j) <= d_i(j) < q2(j)
+        Vor1 = Vor_mask & mask2 # inside t's Voronoi cell and d_i(j) < q2(j)
+        Vor2 = Vor_mask & ~mask2 # inside t's Voronoi cell and  d_i(j) >= q2(j)
+
+        
+        # Something wrong with Vor2 computations...
+        self.Vor1 = Vor1.copy()
+        self.Vor2 = Vor2.copy()
+        self.notVor1 = notVor1.copy()
+        self.notVor2 = notVor2.copy()
+
+        #### outside t's Voronoi cell updates
+        self.q2[notVor2] = self.D[notVor2, i]  # Case II: only update q2 where q_S(j) <= d_i(j) < q2(j)
+        self.q2[notVor1] = self.dists[notVor1] # Case I: update dists, q2, h where d_i(j) < q_S(j)
+        self.dists[notVor1] = self.D[notVor1, i]
+        self.h[notVor1] = t 
+
+        
+        self.indices[t] = i
+        
+        #### inside t's Voronoi cell updates
+        self.dists[Vor1] = self.D[Vor1,i] # Case I: update only dists where d_i(j) < q_S(j). h and q2 stay unchanged
+        # Case II: need to "fully" update dists, q2, and h
+        numV2 = Vor2.sum() 
+        Dv2 = self.D[np.ix_(Vor2,self.indices)]  # self.indices now contains the inserted point, x_i
+        h1h2 = np.argsort(Dv2,axis=1)[:,:2]  # indices of the two smallest distances in each row of Dv2
+        self.h[Vor2] = h1h2[:,0]
+        self.dists[Vor2] = Dv2[np.arange(numV2),h1h2[:,0]].flatten()
+        self.q2[Vor2] = Dv2[np.arange(numV2),h1h2[:,1]].flatten()
+        
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+    
+    def compute_distances(self, inds=None):
+        if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
+            distances = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
+        elif type(inds) == list:
+            distances = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
+        elif inds is None:
+            distances = squareform(pdist(self.X.T, metric='euclidean'))
+        else:
+            raise ValueError(f"inds must be of type `int` or `list`")
+        
+        return distances 
+    
+    def search_distances(self, candidates, idx_to_swap=None):
+        if idx_to_swap is None:
+            if len(self.indices) == 0:
+                search_dists = self.D[:,candidates].T
+            else:
+                search_dists = np.array([np.minimum(self.dists, self.D[:,c]) for c in candidates])
+        else:
+            raise ValueError("Shouldn't be using this function unless 'idx_to_swap=None'... something wrong")
+        
+        return search_dists
+
+    def compute_swap_distances(self, idx_to_swap):
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
+            return np.ones(self.n)
+        inds_wo_t = self.indices[:]
+        inds_wo_t.pop(idx_to_swap)
+        dists = self.D[:,inds_wo_t].min(axis=1).flatten()
+        if self.p is None:
+            return 1.*(dists == np.max(dists))
+        return dists**(self.p)
+    
+    def compute_eager_swap_values(self, idx):
+        if idx in self.indices:
+            return np.ones(len(self.indices))*self.energy*(1.0000001)
+        Dtilde = self.D[:,self.indices+[idx]]
+        r = np.vstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1).reshape(1,-1) for j in range(len(self.indices))])
+        if len(r.shape) == 1:
+            r = r.reshape(1,-1)
+        if self.p is None:
+            r = np.max(r, axis=1)
+        else:
+            r = np.linalg.norm(r, axis=1, ord=self.p)
+        
+        return r 
+
+    def compute_C_matrix(self):
+        '''
+        obsolete with how we're doing search now...
+        '''
+        if self.p is None:
+            p_  = np.inf
+        else:
+            p_ = self.p
+        if len(self.indices) == 1: # in this case, we should just be returning C \in R^{n x 1}, C(i,1) = f({x_i}), which can be computed easily from self.D
+            return  np.linalg.norm(self.D, axis=1, ord=p_).reshape(-1,1)
+        ns = np.argsort(self.D[:, self.indices], axis=1)
+        n = ns[:,0]
+        nr = ns[:,1]
+        q = np.take_along_axis(self.D[:,self.indices], np.expand_dims(n, axis=1), axis=1).squeeze(axis=1)
+        r = np.take_along_axis(self.D[:,self.indices], np.expand_dims(nr, axis=1), axis=1).squeeze(axis=1)
+        Q = np.minimum(self.D, q.reshape(-1,1))
+        C = np.linalg.norm(Q, axis=0, ord=p_).reshape(-1,1) * np.ones(len(self.indices)).reshape(1,-1)
+        for l in range(self.n):
+            if self.p is not None:
+                C[:,n[l]] = (C[:,n[l]]**self.p  + np.minimum(self.D[:,l], r[l])**self.p - Q[l,:]**self.p)**(1./self.p)  # update all the l^th terms in the sums corresponding to ejecting n[l]th current prototype
+            else:
+                C[:,n[l]] = np.maximum(C[:,n[l]], np.minimum(self.D[:,l], r[l]))
+        
+        return C
+        
+
+
+
+
+
+class ClusteringEnergyDenseOld(EnergyClass):
     """
     Need to finish debugging this...
     """
@@ -459,18 +721,23 @@ class ClusteringEnergyDense(EnergyClass):
         return dists**(self.p)
     
     def compute_eager_swap_values(self, idx):
-        dists = self.D[:,self.indices]
-        d = self.D[:,idx].reshape(-1,1)
-        a = np.minimum()
-        r = np.hstack([np.min(np.hstack((dists[:,list(range(j))+list(range(j+1,len(self.indices)))], d)), axis=1).reshape(-1,1) \
-                        for j in range(len(self.indices))]).reshape(self.n, len(self.indices))
+        Dtilde = self.D[:,self.indices+[idx]]
+        r = np.hstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1) for j in range(len(self.indices))])
+        
+        if len(r.shape) == 1:
+            r = r.reshape(1,-1)
+
         if self.p is None:
-            r = np.max(r, axis=0)
+            r = np.max(r, axis=1)
         else:
-            r = np.linalg.norm(r, axis=0, ord=self.p)
+            r = np.linalg.norm(r, axis=1, ord=self.p)
+        
         return r 
 
     def compute_C_matrix(self):
+        '''
+        obsolete with how we're doing search now...
+        '''
         if self.p is None:
             p_  = np.inf
         else:
@@ -493,39 +760,5 @@ class ClusteringEnergyDense(EnergyClass):
         return C
         
 
-
-
-
-
-class LowRankEnergy(EnergyClass):
-    """
-    NOT IMPLEMENTED CURRENTLY
-    """
-    def __init__(self, X, p=2):
-        super().__init__(X, p=p)
-        self.F = np.zeros((self.n, self.k))
-        self.dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
-        self.energy = self.dists.sum()
-        
-    def add(self, i):
-        if self.kernel is None:
-            g = self.X.T @ self.X[:,i].flatten()
-        else:
-            g = self.kernel(self.X[i,:].reshape(1,-1), self.X).flatten()
-        if self.k_sel > 0:
-            g -= self.F[:,:self.k_sel] @ self.F[i, :self.k_sel]
-        if np.isclose(g[i], 0) or g[i] < 0:
-            print(f"Iter = {self.k_sel+1}, g[i] approx 0, exiting...")
-            self.k_sel += 1
-            return 
-        self.F[:,self.k_sel] = g / np.sqrt(g[i])
-        self.dists -= self.F[:,self.k_sel]**2.
-        self.energy = self.dists.sum()
-        self.indices.append(i)
-        self.k_sel += 1
-        self.energy_values.append(self.energy)
-        return
-
-    
 
 
