@@ -4,8 +4,7 @@ from scipy.spatial.distance import pdist, cdist, squareform
 from sklearn.metrics.pairwise import rbf_kernel
 from joblib import Parallel, delayed, parallel_backend
 from tqdm import tqdm 
-
-from scipy.optimize import nnls
+from scipy.linalg import solve_triangular
 
 IMPLEMENTED_ENERGIES = ['conic', 'cluster', 'cluster-dense']
 
@@ -16,7 +15,7 @@ class EnergyClass(object):
         self.k = None 
         self.p = p
         assert (self.p is None) or (self.p > 0)
-        self.d, self.n = X.shape
+        self.dim, self.n = X.shape
         self.energy = None
         self.indices = []
         self.dists = np.ones(self.n)
@@ -29,7 +28,7 @@ class EnergyClass(object):
 
     def set_k(self, k):
         assert type(k) == int 
-        assert k >= 0
+        assert k > 0
         self.k = k
         return 
 
@@ -69,13 +68,13 @@ class EnergyClass(object):
         
         # we make the assumption that we don't need to consider already selected points in our search values. We assume that their search 
         # value--even in the case of swaps--is simply the current energy.  
-        all_energy_vals = np.ones(self.n)*self.energy
+        all_search_vals = np.ones(self.n)*self.energy
         if self.p is not None:
-            all_energy_vals[candidates] = np.array([np.linalg.norm(s_dist, ord=self.p) for s_dist in search_dists])
+            all_search_vals[candidates] = np.array([np.linalg.norm(s_dist, ord=self.p) for s_dist in search_dists])
         else:
-            all_energy_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
+            all_search_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
 
-        return all_energy_vals
+        return all_search_vals
     
     def compute_swap_distances(self, idx_to_swap):
         return NotImplementedError()
@@ -295,64 +294,105 @@ class ConicHullEnergy(EnergyClass):
 
 class LowRankEnergyDense(EnergyClass):
     """
-    NOT IMPLEMENTED CURRENTLY
+    Currently writing the low-rank energy class... not considering complex valued matrices for now...
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
-        self.d, self.n = self.X.shape
-        if self.n >= FLOAT_THRESHOLD:
+        self.dim, self.n = self.X.shape
+        if self.n >= N_FLOAT_THRESHOLD:
             self.X = self.X.astype(np.float32)
-        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
-        self.dists = np.max(self.x_squared_norms)*np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
+        self.G = self.X.T @ self.X # precompute the Gram matrix  
+        self.d = np.diagonal(self.G).copy()  # (self.dists**2.)
+        self.dists = np.sqrt(self.d)
         self.compute_energy()
-        self.D = self.compute_distances()  
-        self.q2 = None 
-        self.h = None
+        self.W = None
+        self.L = None
+        self.f = None 
         self.type = "lowrank-dense"
-        self.W = np.zeros((self.n, self.k))
-        self.dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
-        self.energy = self.dists.sum()
         
     def set_k(self, k):
         super().set_k(k)
+        self.W = np.zeros((self.k, self.n), dtype=self.X.dtype)
+        self.L = np.zeros((self.k, self.k), dtype=self.X.dtype)
+        self.f = np.zeros((self.k,), dtype=self.X.dtype)
     
-    def add(self, i):
-        if self.kernel is None:
-            g = self.X.T @ self.X[:,i].flatten()
+    def add(self, i):   # update the interpolative decomposition (Algorithm 9.1)
+        k_curr = len(self.indices)
+        if k_curr == 0:
+            # in the case of adding the first index, we just set these values directly
+            self.L[0,0] = np.sqrt(self.G[i,i])
+            self.f[0] = 1./self.G[i,i]
+            self.W[0,:] = self.G[i,:] / self.G[i,i]
+            self.d -= self.G[i,:]**2. / self.G[i,i]
         else:
-            g = self.kernel(self.X[i,:].reshape(1,-1), self.X).flatten()
-        if self.k_sel > 0:
-            g -= self.F[:,:self.k_sel] @ self.F[i, :self.k_sel]
-        if np.isclose(g[i], 0) or g[i] < 0:
-            print(f"Iter = {self.k_sel+1}, g[i] approx 0, exiting...")
-            self.k_sel += 1
-            return 
-        self.F[:,self.k_sel] = g / np.sqrt(g[i])
-        self.dists -= self.F[:,self.k_sel]**2.
-        self.energy = self.dists.sum()
+            a = solve_triangular(self.L[:k_curr,:k_curr], self.G[self.indices,i], lower=True)
+            v = self.G[i,i] - np.linalg.norm(a)**2.
+            self.L[k_curr, :k_curr] = a 
+            self.L[k_curr, k_curr] = np.sqrt(v)
+            b = solve_triangular(self.L[:k_curr,:k_curr].T, a, lower=False)
+            self.f[:k_curr] += b**2./v 
+            self.f[k_curr] = 1./v
+            r = self.G[i,:] - self.G[i,self.indices] @ self.W[:k_curr,:]
+            self.W[k_curr,:] = r / v
+            self.W[:k_curr,:] -= np.outer(b, r) / v
+            self.d -= (r**2.) / v
+        
+        if hasattr(self, 'R'): # only if we're doing search builds
+            self.R -= np.outer(self.W[k_curr,:], self.W[k_curr,:]) / self.f[k_curr]
+
+        if np.absolute(self.d.min()) < -1e-9:
+            print("something wrong, got a very negative value in d: ", self.d.min())
+        
+        self.d = np.clip(self.d, 0.0, None) # make sure we don't have negative values
+        
         self.indices.append(i)
-        self.k_sel += 1
+        self.dists = np.sqrt(self.d)   # get the non-squared Euclidean distances to the span
+        self.compute_energy()
         self.energy_values.append(self.energy)
         return
     
+    def downdate(self, t): # do in a bit, # t \in [0, len(self.indices)-1]
+        
+        k_curr = len(self.indices)
+        assert t < k_curr and t >= 0
+        if k_curr == 1:
+            self.L = None
+            self.W = None
+            self.f = None
+            self.d = np.diagonal(self.G)
+        else:
+            raise NotImplementedError("Downdate not implemented yet...")
+
+        return 
+
+    def search_distances(self, candidates, idx_to_swap=None):  # adaptive search build
+        if idx_to_swap is None:
+            if len(self.indices) == 0:
+                self.R = self.G.copy()
+            Q = np.outer(self.d, np.ones(len(candidates)))
+
+            # don't want to consider those points who are already in the span for numerical stability reasons
+            cand_outside_span = np.intersect1d(candidates, np.where(self.d > 1e-12)[0])
+            cand_mask = np.isin(candidates, cand_outside_span)
+            Q[:, cand_mask] -= (self.R[:, cand_outside_span] * self.R[:, cand_outside_span]) / self.d[np.newaxis, cand_outside_span]
+            Q = np.clip(Q, 0.0, None)   
+            Q = np.sqrt(Q)           # correct for fact that self.d has squared Euclidean distances
+        else:
+            raise ValueError("Shouldn't be using this function unless 'idx_to_swap=None'... something wrong")
+        
+        return Q.T    # return the transpose because of how search_distances is currently used in compute_search_values
 
     def swap(self, t, i):
         return 
     
-    def compute_distances(self, inds=None):
-        
-        return 
-    
-    def search_distances(self, candidates, idx_to_swap=None):
-        
-        return #search_dists
+    def compute_eager_swap_values(self, idx):  # adaptive search swaps
+        return #r 
 
-    def compute_swap_distances(self, idx_to_swap):
+    def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
         
         return #dists**(self.p)
     
-    def compute_eager_swap_values(self, idx):
-        return #r 
+    
 
     
 
@@ -367,7 +407,7 @@ class LowRankEnergyDense(EnergyClass):
 #####################################
 
 
-FLOAT_THRESHOLD = 20000
+N_FLOAT_THRESHOLD = 20000
 
 class ClusteringEnergy(EnergyClass):
     """
@@ -375,8 +415,8 @@ class ClusteringEnergy(EnergyClass):
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
-        self.d, self.n = self.X.shape
-        if self.n >= FLOAT_THRESHOLD:
+        self.dim, self.n = self.X.shape
+        if self.n >= N_FLOAT_THRESHOLD:
             self.X = self.X.astype(np.float32)
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
@@ -459,8 +499,8 @@ self.dists = q_S vector from the paper
 class ClusteringEnergyDense(EnergyClass):
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
-        self.d, self.n = self.X.shape
-        if self.n >= FLOAT_THRESHOLD:
+        self.dim, self.n = self.X.shape
+        if self.n >= N_FLOAT_THRESHOLD:
             self.X = self.X.astype(np.float32)
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
@@ -626,8 +666,8 @@ class ClusteringEnergyDenseOld(EnergyClass):
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
-        self.d, self.n = self.X.shape
-        if self.n >= FLOAT_THRESHOLD:
+        self.dim, self.n = self.X.shape
+        if self.n >= N_FLOAT_THRESHOLD:
             self.X = self.X.astype(np.float32)
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
