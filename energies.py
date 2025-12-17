@@ -415,7 +415,9 @@ class LowRankEnergyDense(EnergyClass):
         """
         p = L.shape[0]
         for j in range(p):
-            r = np.sqrt(L[j,j]**2. - a[j]**2.)
+            r = L[j,j]**2. - a[j]**2.
+            assert r > 0, "Downdate would result in non-positive semidefinite matrix"
+            r = np.sqrt(r)
             c = r / L[j,j]
             s = a[j] / L[j,j]
             L[j,j] = r
