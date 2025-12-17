@@ -392,8 +392,35 @@ class LowRankEnergyDense(EnergyClass):
         
         return #dists**(self.p)
     
-    
+    @staticmethod
+    def cholesky_update(L, a): 
+        """
+        Perform a rank-1 Cholesky update of the L matrix with vector a.
+        L is updated in place.
+        """
+        p = L.shape[0]
+        for j in range(p):
+            r = np.sqrt(L[j,j]**2. + a[j]**2.)
+            c = L[j,j] / r
+            s = a[j] / r
+            L[j,j] = r
+            L[j+1:,j] = c * L[j+1:,j] + s * a[j+1:]
+            a[j+1:] = (a[j+1:] - s * L[j+1:,j]) / c
 
+    @staticmethod
+    def cholesky_downdate(L, a):
+        """
+        Perform a rank-1 Cholesky downdate of the L matrix with vector a.
+        L is updated in place.
+        """
+        p = L.shape[0]
+        for j in range(p):
+            r = np.sqrt(L[j,j]**2. - a[j]**2.)
+            c = r / L[j,j]
+            s = a[j] / L[j,j]
+            L[j,j] = r
+            L[j+1:,j] = (L[j+1:,j] - s * a[j+1:]) / c
+            a[j+1:] = c * a[j+1:] - s * L[j+1:,j]
     
 
 
