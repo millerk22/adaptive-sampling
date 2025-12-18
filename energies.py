@@ -219,91 +219,169 @@ class ClusteringEnergy(EnergyClass):
 
 class LowRankEnergy(EnergyClass):
     """
-    Currently writing the low-rank energy class... not considering complex valued matrices for now...
+    Low-rank energy class that supports both real and complex valued matrices.
+    For complex X, we work with the Hermitian Gram matrix G = X^* X.
     """
     def __init__(self, X, p=2):
         super().__init__(X, p=p)
         self.dim, self.n = self.X.shape
-        if self.n >= N_FLOAT_THRESHOLD:
+
+        # Detect whether X is complex
+        self.is_complex = np.iscomplexobj(self.X)
+
+        # Downcast only in the purely real case (preserve complex dtype otherwise)
+        if (not self.is_complex) and (self.n >= N_FLOAT_THRESHOLD):
             self.X = self.X.astype(np.float32)
-        self.G = self.X.T @ self.X # precompute the Gram matrix  
-        self.d = np.diagonal(self.G).copy()  # (self.dists**2.)
+
+        # Compute the Gram matrix G = X^* X
+        if self.is_complex:
+            self.G = self.X.conj().T @ self.X
+        else:
+            self.G = self.X.T @ self.X
+
+        self.d = np.real(np.diagonal(self.G).copy())
         self.dists = np.sqrt(self.d)
         self.compute_energy()
-        self.W = None
-        self.L = None
-        self.f = None 
+        self.W = None   # interpolation weights
+        self.L = None   # Cholesky factor of G[indices, indices]
+        self.f = None   # diagonal of G[indices, indices]^{-1}
         self.type = "lowrank"
         
     def set_k(self, k):
         super().set_k(k)
+        # W and L follow X's dtype; f is always real
         self.W = np.zeros((self.k, self.n), dtype=self.X.dtype)
         self.L = np.zeros((self.k, self.k), dtype=self.X.dtype)
-        self.f = np.zeros((self.k,), dtype=self.X.dtype)
-    
+        self.f = np.zeros((self.k,))
+
     def add(self, i):   # update the interpolative decomposition (Algorithm 9.1)
         k_curr = len(self.indices)
+        G_ii = np.real(self.G[i, i])
         if k_curr == 0:
-            # in the case of adding the first index, we just set these values directly
-            self.L[0,0] = np.sqrt(self.G[i,i])
-            self.f[0] = 1./self.G[i,i]
-            self.W[0,:] = self.G[i,:] / self.G[i,i]
-            self.d -= self.G[i,:]**2. / self.G[i,i]
-        else:
-            a = solve_triangular(self.L[:k_curr,:k_curr], self.G[self.indices,i], lower=True)
-            v = self.G[i,i] - np.linalg.norm(a)**2.
-            self.L[k_curr, :k_curr] = a 
-            self.L[k_curr, k_curr] = np.sqrt(v)
-            b = solve_triangular(self.L[:k_curr,:k_curr].T, a, lower=False)
-            self.f[:k_curr] += b**2./v 
-            self.f[k_curr] = 1./v
-            r = self.G[i,:] - self.G[i,self.indices] @ self.W[:k_curr,:]
-            self.W[k_curr,:] = r / v
-            self.W[:k_curr,:] -= np.outer(b, r) / v
-            self.d -= (r**2.) / v
-        
-        if hasattr(self, 'R'): # only if we're doing search builds
-            self.R -= np.outer(self.W[k_curr,:], self.W[k_curr,:]) / self.f[k_curr]
+            self.L[0, 0] = np.sqrt(G_ii)
+            self.f[0] = 1.0 / G_ii
+            self.W[0, :] = self.G[i, :] / G_ii
+            self.d -= np.abs(self.G[i, :])**2 / G_ii
 
-        if np.absolute(self.d.min()) < -1e-9:
+        else:
+            # Solve L a = G[indices, i]
+            a = solve_triangular(self.L[:k_curr, :k_curr], self.G[self.indices, i], lower=True)
+            v = G_ii - np.vdot(a, a).real
+
+            # update L
+            self.L[k_curr, :k_curr] = a.conj()
+            self.L[k_curr, k_curr] = np.sqrt(v)
+
+            # Solve L^* b = a  (conjugate transpose)
+            b = solve_triangular(self.L[:k_curr, :k_curr], a, lower=True, trans='C')
+
+            # update f
+            self.f[:k_curr] += (np.abs(b)**2) / v
+            self.f[k_curr] = 1.0 / v
+
+            # update W
+            r = self.G[i, :] - self.G[i, self.indices] @ self.W[:k_curr, :]
+            self.W[k_curr, :] = r / v
+            self.W[:k_curr, :] -= np.outer(b, r) / v
+
+            # update d
+            self.d -= np.abs(r)**2 / v
+        
+        
+        
+        # Update R if we're in a search build
+        if hasattr(self, 'R'):
+            w_k = self.W[k_curr, :]
+            self.R -= np.outer(w_k, w_k.conj()) / self.f[k_curr]
+
+        # Sanity check: d should not be significantly negative
+        if self.d.min() < -1e-9:
             print("something wrong, got a very negative value in d: ", self.d.min())
         
-        self.d = np.clip(self.d, 0.0, None) # make sure we don't have negative values
+        # Clip small negatives from numerical errors
+        self.d = np.clip(self.d, 0.0, None)
         
         self.indices.append(i)
-        self.dists = np.sqrt(self.d)   # get the non-squared Euclidean distances to the span
+        self.dists = np.sqrt(self.d)   # Euclidean distances to the span
         self.compute_energy()
         self.energy_values.append(self.energy)
         return
-    
-    def downdate(self, t): # do in a bit, # t \in [0, len(self.indices)-1]
-        
-        k_curr = len(self.indices)
-        assert t < k_curr and t >= 0
-        if k_curr == 1:
-            self.L = None
-            self.W = None
-            self.f = None
-            self.d = np.diagonal(self.G)
-        else:
-            raise NotImplementedError("Downdate not implemented yet...")
-
-        return 
 
     def search_distances(self, candidates):  # adaptive search build
         if len(self.indices) == 0:
             self.R = self.G.copy()
+
         Q = np.outer(self.d, np.ones(len(candidates)))
 
-        # don't want to consider those points who are already in the span for numerical stability reasons
+        # don't want to consider those points already in the span for numerical stability reasons
         cand_outside_span = np.intersect1d(candidates, np.where(self.d > 1e-12)[0])
         cand_mask = np.isin(candidates, cand_outside_span)
-        Q[:, cand_mask] -= (self.R[:, cand_outside_span] * self.R[:, cand_outside_span]) / self.d[np.newaxis, cand_outside_span]
-        Q = np.clip(Q, 0.0, None)   
-        Q = np.sqrt(Q)           # correct for fact that self.d has squared Euclidean distances
-        
-        return Q.T    # return the transpose because of how search_distances is currently used in compute_search_values
 
+        # compute update of distances for all candidates outside the span
+        if cand_outside_span.size > 0:
+            Q[:, cand_mask] -= (np.abs(self.R[:, cand_outside_span])**2) / self.d[np.newaxis, cand_outside_span]
+
+        Q = np.clip(Q, 0.0, None)
+        Q = np.sqrt(Q)  # because self.d stores squared distances, and we want Euclidean distances
+
+        # return transpose because of how search_distances is currently used in compute_search_values
+        return Q.T
+    
+    def downdate(self, t): # (Algorithm 9.4)
+        k_curr = len(self.indices)
+        assert t < k_curr and t >= 0
+
+        # downdate d first
+        self.d -= np.abs(self.W[t, :])**2 / self.f[t]
+        
+        # perform Cholesky Delete operation
+        self.L[t,:t] = 0.0 
+        self.L[t,t] = 1.0 
+        # only need to do this part if t is not the last index
+        if t != k_curr - 1:
+            self.L[t+1:,t] = 0.0
+            self.cholesky_update(self.L[t+1:,t+1:], self.L[t+1:,t]) # update this part of the Cholesky factor 
+        
+        # downdate W and f
+        b = solve_triangular(self.L, self.G[self.indices, self.indices[t]], lower=True) 
+        b = solve_triangular(self.L, b, lower=True, trans='C')
+        b[t] = -1.0
+        self.W  += b[:,np.newaxis] * self.W
+        b_t = np.concatenate((b[:t], b[t+1:]))
+        self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(b_t, b_t).real)
+            
+        return 
+    
+    def update(self, t, i): # having downdated the t^th prototype, now add i \in {1,...,n} \ indices
+        k_curr = len(self.indices)
+        assert t < k_curr and t >= 0
+        assert self.L[t,t] == 1.0    # check to make sure we are going to update after a downdate
+
+        # solve for some auxiliary variable
+        a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
+        v = self.G[i,i] - np.vdot(a[:t], a[:t]).real
+        b = solve_triangular(self.L, a, lower=True, trans='C')
+        b[t] = -1.0
+        c = self.G[self.indices[t+1:], i] - self.L[t+1:, :t] @ a[:t]
+
+        # correct the Cholesky factor L matrix
+        self.L[t,:t] = a[:t].conj()
+        self.L[t,t] = np.sqrt(v)
+        self.L[t+1:, t] = c/ np.sqrt(v)
+        self.L[t+1:, t+1:] = self.cholesky_downdate(self.L[t+1:, t+1:], c/np.sqrt(v))
+
+        # update f, W, d
+        self.f += np.abs(b)**2. / v
+        r = self.G[:,i] - self.W.conj().T @ self.G[self.indices, i]
+        self.W -= np.outer(b, r.conj())/ v
+        self.d -= np.abs(r)**2. / v
+
+        return 
+
+    def prep_sampling_swap(self):
+        U = np.outer(np.ones(self.k), self.d) + np.abs(self.W)**2 / self.f[:, np.newaxis]
+        return U
+    
     def swap(self, t, i):
         return 
     
@@ -312,7 +390,7 @@ class LowRankEnergy(EnergyClass):
 
     def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
         
-        return #dists**(self.p)
+        return #dists**(self.p) 
     
     @staticmethod
     def cholesky_update(L, a): 
@@ -574,7 +652,7 @@ class ClusteringEnergyNonGram(EnergyClass):
         self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
         self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
         self.compute_energy()
-        self.type = "cluster"
+        self.type = "cluster-nongram"
     
     def set_k(self, k):
         super().set_k(k)
@@ -635,150 +713,3 @@ class ClusteringEnergyNonGram(EnergyClass):
     
     def compute_eager_swap_values(self, idx):
         raise NotImplementedError("Not implemented yet...")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class LowRankEnergyComplex(EnergyClass):
-    """
-    Low-rank energy class that supports both real and complex valued matrices.
-    For complex X, we work with the Hermitian Gram matrix G = X^* X.
-    """
-    def __init__(self, X, p=2):
-        super().__init__(X, p=p)
-        self.dim, self.n = self.X.shape
-
-        # Detect whether X is complex
-        self.is_complex = np.iscomplexobj(self.X)
-
-        # Downcast only in the purely real case (preserve complex dtype otherwise)
-        if (not self.is_complex) and (self.n >= N_FLOAT_THRESHOLD):
-            self.X = self.X.astype(np.float32)
-
-        # Compute the Gram matrix G = X^* X
-        if self.is_complex:
-            self.G = self.X.conj().T @ self.X
-        else:
-            self.G = self.X.T @ self.X
-
-        self.d = np.real(np.diagonal(self.G).copy())
-        self.dists = np.sqrt(self.d)
-        self.compute_energy()
-        self.W = None   # interpolation weights
-        self.L = None   # Cholesky factor of G[indices, indices]
-        self.f = None   # diagonal of G[indices, indices]^{-1}
-        self.type = "lowrank-complex"
-        
-    def set_k(self, k):
-        super().set_k(k)
-
-        # W and L follow X's dtype; f is always real
-        self.W = np.zeros((self.k, self.n), dtype=self.X.dtype)
-        self.L = np.zeros((self.k, self.k), dtype=self.X.dtype)
-        self.f = np.zeros((self.k,), dtype=self.X.dtype)
-
-    def add(self, i):   # update the interpolative decomposition (Algorithm 9.1)
-        k_curr = len(self.indices)
-        G_ii = np.real(self.G[i, i])
-        if k_curr == 0:
-            self.L[0, 0] = np.sqrt(G_ii)
-            self.f[0] = 1.0 / G_ii
-            self.W[0, :] = self.G[i, :] / G_ii
-            self.d -= np.abs(self.G[i, :])**2 / G_ii
-
-        else:
-            # Solve L a = G[indices, i]
-            a = solve_triangular(self.L[:k_curr, :k_curr], self.G[self.indices, i], lower=True)
-            v = G_ii - np.vdot(a, a).real
-
-            # update L
-            self.L[k_curr, :k_curr] = a
-            self.L[k_curr, k_curr] = np.sqrt(v)
-
-            # Solve L^* b = a  (conjugate transpose)
-            b = solve_triangular(self.L[:k_curr, :k_curr].conj().T, a, lower=False)
-
-            # update f
-            self.f[:k_curr] += (np.abs(b)**2) / v
-            self.f[k_curr] = 1.0 / v
-
-            # update W
-            r = self.G[i, :] - self.G[i, self.indices] @ self.W[:k_curr, :]
-            self.W[k_curr, :] = r / v
-            self.W[:k_curr, :] -= np.outer(b, r) / v
-
-            # update d
-            self.d -= np.abs(r)**2 / v
-        
-        # Update R if we're in a search build
-        if hasattr(self, 'R'):
-            w_k = self.W[k_curr, :]
-            self.R -= np.outer(w_k, w_k.conj()) / self.f[k_curr]
-
-        # Sanity check: d should not be significantly negative
-        if self.d.min() < -1e-9:
-            print("something wrong, got a very negative value in d: ", self.d.min())
-        
-        # Clip small negatives from numerical errors
-        self.d = np.clip(self.d, 0.0, None)
-        
-        self.indices.append(i)
-        self.dists = np.sqrt(self.d)   # Euclidean distances to the span
-        self.compute_energy()
-        self.energy_values.append(self.energy)
-        return
-
-    def search_distances(self, candidates):  # adaptive search build
-        if len(self.indices) == 0:
-            self.R = self.G.copy()
-
-        Q = np.outer(self.d, np.ones(len(candidates)))
-
-        # don't want to consider those points already in the span for numerical stability reasons
-        cand_outside_span = np.intersect1d(candidates, np.where(self.d > 1e-12)[0])
-        cand_mask = np.isin(candidates, cand_outside_span)
-
-        # compute update of distances for all candidates outside the span
-        if cand_outside_span.size > 0:
-            Q[:, cand_mask] -= (np.abs(self.R[:, cand_outside_span])**2) / self.d[np.newaxis, cand_outside_span]
-
-        Q = np.clip(Q, 0.0, None)
-        Q = np.sqrt(Q)  # because self.d stores squared distances
-
-        # return transpose because of how search_distances is currently used in compute_search_values
-        return Q.T
-    
-    def downdate(self, t): # do in a bit, # t \in [0, len(self.indices)-1]
-        
-        k_curr = len(self.indices)
-        assert t < k_curr and t >= 0
-        if k_curr == 1:
-            self.L = None
-            self.W = None
-            self.f = None
-            self.d = np.diagonal(self.G)
-        else:
-            raise NotImplementedError("Downdate not implemented yet...")
-
-        return 
-    
-    def swap(self, t, i):
-        return 
-    
-    def compute_eager_swap_values(self, idx):  # adaptive search swaps
-        return #r 
-
-    def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
-        
-        return #dists**(self.p)

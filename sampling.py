@@ -115,107 +115,63 @@ class AdaptiveSampler(object):
 
 
 
-        elif method == "searchold":
-            count = 0
-            for u in range(max_swaps):
-                if self.report_timing:
-                    tic = perf_counter()
-                t = u % k
-                
-                if self.Energy.type in ["conic", "cluster"]:
-                    C = np.zeros((n, k))
-                    for t in range(k):
-                        C[:,t] = self.Energy.compute_search_values(idx_to_swap=t) # candidates will be the unselected inds, since we consider all entries
-                                                                            # of C that correspond to the current indices (S) will just have the current energy value.
-                                                                            # NOTE: this gives a different value of C than in the compute_C_matrix() setting, but the minimum 
-                                                                            #     across each row is the same, so the computation that comes after is unaffected.
-                elif self.Energy.type == "cluster-dense":
-                    C = self.Energy.compute_C_matrix()
-                else:
-                    raise NotImplementedError(f"search swap moves not yet implemented for {self.Energy.type}...")
-                
-                # find swap move in argmin_{idx,t} C(idx,t). arbitrarily break ties
-                idx_poss, t_poss = np.where(C == np.min(C))
-
-                # if the minimum is the current energy, then no swap results in a better energy, so stop swapping
-                if np.intersect1d(self.Energy.indices, idx_poss).size > 0:
-                    break 
-
-                jstar = self.random_state.choice(len(idx_poss))
-                idx, t = idx_poss[jstar], t_poss[jstar]
-
-                if self.report_timing:
-                    toc = perf_counter()
-                    self.times.append(toc-tic)
-
-                self.Energy.swap(t, idx)
-                
-                count += 1
-                if count > max_swaps:
-                    break
-        elif method == "sampling":
-            # adaptive sampling swap
+        elif method == "sampling":   # adaptive sampling swap
+            
+            # initialize counters, force swap prob vector, and best prototype trackers
             t, w = 0, 0
             p = np.zeros(k)
-
-            # will track the best found energy and indices through adaptive swap moves
-            best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]
-            num_forced_swaps = 0
-            num_swaps_all = 0
-            swap_force_probs, forced_iters = [], []
-            self.best_energy_vals = [best_energy]
-            for u in range(max_swaps):
-                
+            best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]  # will track the best found energy and indices through adaptive swap moves
+            
+            # Complete at most 2*k swap attempts
+            for u in range(2*k):
                 if self.report_timing:
                     tic = perf_counter()
-                q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t) # power p included in Energy object computation
+                
+                # Step 1 : update cost vector and sample a proposal prototype 
+                q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # includes the power p from the Energy object computation
                 q_probs_den = q_probs_wo_st.sum()
                 s_prime = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_den)
                 p[w] = q_probs_wo_st[self.Energy.indices[t]] /q_probs_den # probability of not swapping at this current iteration
-                swap_force_probs.append(p[w])
-                forced_iters.append(0)
                 w += 1
-                swapped = False
-                if s_prime != self.Energy.indices[t]: # "natural" swap
-                    self.Energy.swap(t, s_prime)
-                    w = 0
-                    swapped = True
-                elif w == k and self.Energy.p is None:  # adaptive selection swap will not occur going forward, so break
+                # Step 2: if stagnated, then terminate (p = \inf case)
+                if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is None):
                     break
-                elif w == k:
-                    probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))
-                    i = self.random_state.choice(range(k), p=probs)
 
-                    t = (t + i) % k
-                    force_swap_probs = q_probs_wo_st/(q_probs_den - q_probs_wo_st[self.Energy.indices[t]])
+                # Step 3: If stagnated, then force a swap (p < \inf case)
+                if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is not None):
+                    probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))  # probabilities for selecting which prototype to force a swap
+                    j = self.random_state.choice(range(k), p=probs)   
+                    t = (t + j + 1) % k 
+                    q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # with new index, compute cost vector probs
+                    q_probs_den = q_probs_wo_st.sum()                    
+                    force_swap_probs = q_probs_wo_st/(q_probs_den - q_probs_wo_st[self.Energy.indices[t]])  
                     force_swap_probs[self.Energy.indices[t]] = 0.0
-                    s_prime = self.random_state.choice(range(self.Energy.n), p=force_swap_probs)
+                    assert np.isclose(force_swap_probs.sum(), 1.0) # check valid probability distribution
+                    s_prime = self.random_state.choice(range(self.Energy.n), p=force_swap_probs) # sample the forced swap prototype
+                
+                # Step 4: perform the swap if swap is found
+                if s_prime != self.Energy.indices[t]:
                     self.Energy.swap(t, s_prime)
-                    w = 0
-                    swapped = True
-                    num_forced_swaps += 1
-                    forced_iters = forced_iters[:-k] + [1]*k  # overwrite the last k entries as leading to forced swaps
-
-                if swapped:
+                    w = 0                       # reset stagnation counter
                     # check if this is best energy found so far
                     if self.Energy.energy < best_energy:
                         best_energy = self.Energy.energy
                         best_inds = self.Energy.indices[:]
-                    num_swaps_all += 1
-                
-                self.best_energy_vals.append(best_energy) # record best_energy_value 
-                
-                t = (t + 1) % k
+
+
+                t = (t + 1) % k    # increment index counter
+
 
             # at the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
             all_energy_values = self.Energy.energy_values[:]  # make copy of old energy values (have all the swaps recorded)
-            if self.Energy.type == "cluster-dense":
-                self.Energy = ClusteringEnergyDense(self.Energy.X, p=self.Energy.p)
+            if self.Energy.type == "cluster":
+                self.Energy = ClusteringEnergy(self.Energy.X, p=self.Energy.p)
+            elif self.Energy.type == "lowrank":
+                self.Energy = LowRankEnergy(self.Energy.X, p=self.Energy.p)
             elif self.Energy.type == "conic":
                 self.Energy = ConicHullEnergy(self.Energy.X, p=self.Energy.p)
-            elif self.Energy.type == "cluster":
-                self.Energy = ClusteringEnergy(self.Energy.X, p=self.Energy.p)
+            
             else:
                 raise NotImplementedError(f"Energy type {self.Energy.type} not recognized...")
             self.Energy.init_set(best_inds)
@@ -225,86 +181,14 @@ class AdaptiveSampler(object):
                 self.Energy.energy_values = all_energy_values + [self.Energy.energy_values[-1]]  # overwrite the energy_values list to have full history for later plotting
             if self.Energy.energy != best_energy: # check that we have properly reset the Energy object
                 print(best_energy, self.Energy.energy, "not same?")
-            # print("Number of forced swaps during adaptive-sampling swap phase: ", num_forced_swaps)
-            self.num_forced_swaps = num_forced_swaps  
-            self.swap_force_probs = swap_force_probs
-            self.forced_iters = forced_iters
-            self.num_actual_swaps = num_swaps_all
-
-            # print(len(self.forced_iters), len(forced_iters), len(self.swap_force_probs))
+            
+            # self.num_forced_swaps = num_forced_swaps  
+            # self.swap_force_probs = swap_force_probs
+            # self.forced_iters = forced_iters
+            # self.num_actual_swaps = num_swaps_all
 
         else:
-            # adaptive-sampling swap (old)
-            check_change_flag = False
-            if self.Energy.p is None:
-                no_change_count = 0
-                check_change_flag = True
-            
-            # will track the best found energy and indices through adaptive swap moves
-            best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]
-
-            for u in range(max_swaps):
-                if self.report_timing:
-                    tic = perf_counter()
-                t = u % k
-                if check_change_flag:
-                    old_idx = self.Energy.indices[t]
-
-                # compute the distances to prototypes minus the current index swapped out
-                q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)
-                inds_wo_st = self.Energy.indices[:t] + self.Energy.indices[t+1:]
-                q_probs_wo_st[inds_wo_st] = 0.0       # don't want to give any probability to those points that are already in the current indices set
-                
-                # sample the swap move point
-                if self.Energy.p is None:
-                    max_idxs = np.where(q_probs_wo_st == 1.0)[0]
-                    idx = self.random_state.choice(max_idxs)
-                else:
-                    idx = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_wo_st.sum())
-                
-                if self.report_timing:
-                    toc = perf_counter()
-                    self.times.append(toc-tic)
-                
-                # update the Energy object according to this swap move
-                self.Energy.swap(t, idx) 
-
-                # check if this is best energy found so far
-                if self.Energy.energy < best_energy:
-                    best_energy = self.Energy.energy
-                    best_inds = self.Energy.indices[:]
-                
-                # check if the index set has not changed for k consecutive iterations
-                if check_change_flag:
-                    if idx == old_idx:
-                        no_change_count += 1 
-                    else:
-                        no_change_count = 0
-                    old_idx = idx   
-                    if no_change_count == k:
-                        break
-                
-                if debug:
-                    inds.append(self.Energy.indices[:])
-                    energy_vals.append(self.Energy.energy)
-                    dists_vals.append(self.Energy.dists.copy())
-            
-
-            # at the end of the swap phase, set the indices to the best found
-            #     - first re-initialize the Energy object to clear out the current indices
-            if self.Energy.type == "cluster-dense":
-                self.Energy = ClusteringEnergyDense(self.Energy.X, p=self.Energy.p)
-            elif self.Energy.type == "conic":
-                self.Energy = ConicHullEnergy(self.Energy.X, p=self.Energy.p)
-            elif self.Energy.type == "cluster":
-                self.Energy = ClusteringEnergy(self.Energy.X, p=self.Energy.p)
-            else:
-                raise NotImplementedError(f"Energy type {self.Energy.type} not recognized...")
-            self.Energy.init_set(best_inds)
-            assert self.Energy.energy == best_energy # check that we have properly reset the Energy object
-            
-
-
+            raise NotImplementedError(f"Method {method} not recognized for swap phase.")
 
         if debug:
             return inds, energy_vals, dists_vals
