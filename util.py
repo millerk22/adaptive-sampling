@@ -101,8 +101,8 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                 Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
             elif args.energy == "cluster":
                 Energy = ClusteringEnergy(X, p=p)
-            elif args.energy == "cluster-dense":
-                Energy = ClusteringEnergyDense(X, p=p)
+            elif args.energy == "cluster-nongram":
+                Energy = ClusteringEnergyNonGram(X, p=p)
             else:
                 print(f"Energy type = {args.energy} not recognized, skipping")
                 break
