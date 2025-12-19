@@ -311,7 +311,7 @@ class LowRankEnergy(EnergyClass):
         if len(self.indices) == 0:
             self.R = self.G.copy()
 
-        Q = np.outer(self.d, np.ones(len(candidates)))
+        Q = np.outer(np.ones(len(candidates)), self.d)
 
         # don't want to consider those points already in the span for numerical stability reasons
         cand_outside_span = np.intersect1d(candidates, np.where(self.d > 1e-12)[0])
@@ -319,29 +319,24 @@ class LowRankEnergy(EnergyClass):
 
         # compute update of distances for all candidates outside the span
         if cand_outside_span.size > 0:
-            Q[:, cand_mask] -= (np.abs(self.R[:, cand_outside_span])**2) / self.d[np.newaxis, cand_outside_span]
+            Q[cand_mask, :] -= (np.abs(self.R[cand_outside_span,:])**2) / self.d[cand_outside_span, np.newaxis]
 
         Q = np.clip(Q, 0.0, None)
         Q = np.sqrt(Q)  # because self.d stores squared distances, and we want Euclidean distances
 
         # return transpose because of how search_distances is currently used in compute_search_values
-        return Q.T
+        return Q
     
     def downdate(self, t): # (Algorithm 9.4)
         k_curr = len(self.indices)
         assert t < k_curr and t >= 0
 
         # downdate d first
-        self.d -= np.abs(self.W[t, :])**2 / self.f[t]
+        self.d += np.abs(self.W[t, :])**2 / self.f[t]
         
         # perform Cholesky Delete operation
-        self.L[t,:t] = 0.0 
-        self.L[t,t] = 1.0 
-        # only need to do this part if t is not the last index
-        if t != k_curr - 1:
-            self.L[t+1:,t] = 0.0
-            self.cholesky_update(self.L[t+1:,t+1:], self.L[t+1:,t]) # update this part of the Cholesky factor 
-        
+        self.cholesky_delete(self.L, t)
+
         # downdate W and f
         b = solve_triangular(self.L, self.G[self.indices, self.indices[t]], lower=True) 
         b = solve_triangular(self.L, b, lower=True, trans='C')
@@ -393,6 +388,17 @@ class LowRankEnergy(EnergyClass):
         return #dists**(self.p) 
     
     @staticmethod
+    def cholesky_delete(L, t):
+        assert t < L.shape[0] and t >= 0
+        L[t,:t] = 0.0 
+        L[t,t] = 1.0 
+        # only need to do this part if t is not the last index
+        if t != L.shape[0] - 1:
+            LowRankEnergy.cholesky_update(L[t+1:,t+1:], L[t+1:,t]) # update this part of the Cholesky factor 
+            L[t+1:,t] = 0.0
+        return
+    
+    @staticmethod
     def cholesky_update(L, a): 
         """
         Perform a rank-1 Cholesky update of the L matrix with vector a.
@@ -400,12 +406,17 @@ class LowRankEnergy(EnergyClass):
         """
         p = L.shape[0]
         for j in range(p):
-            r = np.sqrt(L[j,j]**2. + a[j]**2.)
+            r = np.sqrt(abs(L[j,j])**2. + abs(a[j])**2.)
             c = L[j,j] / r
             s = a[j] / r
             L[j,j] = r
-            L[j+1:,j] = c * L[j+1:,j] + s * a[j+1:]
+            L[j+1:,j] = c.conj() * L[j+1:,j] + s.conj() * a[j+1:]
             a[j+1:] = (a[j+1:] - s * L[j+1:,j]) / c
+        return 
+    
+    @staticmethod
+    def cholesky_add(L, a):
+        raise NotImplementedError("Cholesky add not yet implemented.")
 
     @staticmethod
     def cholesky_downdate(L, a):
@@ -415,7 +426,7 @@ class LowRankEnergy(EnergyClass):
         """
         p = L.shape[0]
         for j in range(p):
-            r = L[j,j]**2. - a[j]**2.
+            r = abs(L[j,j])**2. - abs(a[j])**2.
             assert r > 0, "Downdate would result in non-positive semidefinite matrix"
             r = np.sqrt(r)
             c = r / L[j,j]
