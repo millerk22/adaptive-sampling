@@ -410,7 +410,7 @@ class LowRankEnergy(EnergyClass):
             c = L[j,j] / r
             s = a[j] / r
             L[j,j] = r
-            L[j+1:,j] = c.conj() * L[j+1:,j] + s.conj() * a[j+1:]
+            L[j+1:,j] = c * L[j+1:,j] + s.conj() * a[j+1:]
             a[j+1:] = (a[j+1:] - s * L[j+1:,j]) / c
         return 
     
