@@ -246,6 +246,7 @@ class LowRankEnergy(EnergyClass):
         self.L = None   # Cholesky factor of G[indices, indices]
         self.f = None   # diagonal of G[indices, indices]^{-1}
         self.type = "lowrank"
+        self.U = None  # for adaptive sampling swap
         
     def set_k(self, k):
         super().set_k(k)
@@ -356,7 +357,6 @@ class LowRankEnergy(EnergyClass):
         # check the the decomposition is ready for the update (i.e., has does not have an active prototype at index t)
         assert self.L[t,t] == 1.0
         assert np.isclose(self.W[t, :], 0.0).all()
-        print(self.f, self.f[t], t)
         assert np.isclose(self.f[t], 0.0)
         
         # solve for some auxiliary variable
@@ -374,23 +374,32 @@ class LowRankEnergy(EnergyClass):
 
         # update energy's indices and change the cholesky factor via add
         self.indices[t] = i
-        self.cholesky_add(self.L, self.G[self.indices, i] , t) # still fixing...
+        self.cholesky_add(self.L, self.G[self.indices, i] , t)
 
         return 
 
-    def prep_sampling_swap(self):
+    def prep_sampling_swap(self, returnU=True):
         U = np.outer(np.ones(self.k), self.d) + np.abs(self.W)**2 / self.f[:, np.newaxis]
-        return U
+        if self.p is None:
+            self.U = (U == np.max(U, axis=0)).astype(float)
+        else:
+            self.U = U**(0.5*self.p)
+        if returnU:
+            return self.U
+        return 
     
     def swap(self, t, i):
+        self.downdate(t)
+        self.update(t, i)
         return 
     
     def compute_eager_swap_values(self, idx):  # adaptive search swaps
         return #r 
 
     def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
-        
-        return #dists**(self.p) 
+        if self.U is None:
+            self.prep_sampling_swap(returnU=False)
+        return self.U[idx_to_swap,:]
     
     @staticmethod
     def cholesky_delete(L, t):
@@ -414,38 +423,42 @@ class LowRankEnergy(EnergyClass):
             r = np.sqrt(abs(L[j,j])**2. + abs(a[j])**2.)
             c = L[j,j] / r
             s = a[j].conj() / r
-            L[j,j] = r
-            L[j+1:,j] = c * L[j+1:,j] + s * a[j+1:]
-            a[j+1:] = (a[j+1:] - s.conj() * L[j+1:,j]) / c
+            L[j:,j] = c * L[j:,j] + s * a[j:]
+            a[j:] = (a[j:] - s.conj() * L[j:,j]) / c
         return 
     
     @staticmethod
     def cholesky_add(L, z, t):
         assert t < L.shape[0] and t >= 0
-        a = solve_triangular(L[:t,:t], z[:t], lower=True)
-        v = z[t] - np.vdot(a, a).real
-        c = z[t+1:] - L[t+1:,:t] @ a
-        T = LowRankEnergy.cholesky_downdate(L[t+1:,t+1:], c/np.sqrt(v))
+        if t == 0:
+            v = z[t]
+            c = z[t+1:]
+        else:
+            a = solve_triangular(L[:t,:t], z[:t], lower=True)
+            v = z[t] - np.vdot(a, a).real
+            c = z[t+1:] - L[t+1:,:t] @ a
+            L[t,:t] = a.conj()
+        LowRankEnergy.cholesky_downdate(L[t+1:,t+1:], c/np.sqrt(v))
         L[t,t] = np.sqrt(v)
-        L[t,:t] = a.conj()
         L[t+1:,t] = c / np.sqrt(v)
-        L[t+1:,t+1:] = T
         return
 
     @staticmethod
     def cholesky_downdate(L, a):
         """
         Perform a rank-1 Cholesky downdate of the L matrix with vector a.
-        L is updated in place.
+        L is changed in place.
         """
         p = L.shape[0]
         for j in range(p):
-            r = np.sqrt(abs(L[j,j])**2. + abs(a[j])**2.)
-            c = r / L[j,j]
-            s = a[j].conj() / L[j,j]
-            L[j,j] = r
-            L[j+1:,j] = (L[j+1:,j] - s * a[j+1:]) / c
-            a[j+1:] = c * a[j+1:] - s * L[j+1:,j]
+            if abs(L[j,j])**2. <= abs(a[j])**2.:
+                raise ValueError("Cholesky downdate will have complex diagonal... something wrong.")
+            r = np.sqrt(abs(L[j,j])**2. - abs(a[j])**2.)
+            c = L[j,j] / r
+            s = a[j].conj() / r
+            L[j:,j] = c * L[j:,j] - s * a[j:]
+            a[j:] = (a[j:] - s.conj() * L[j:,j]) / c
+        return 
 
 
 

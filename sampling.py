@@ -9,8 +9,9 @@ class AdaptiveSampler(object):
         self.seed = seed
         self.report_timing = report_timing
         self.random_state = np.random.RandomState(self.seed)
-        self.times = []
-    
+        self.build_times = []
+        self.swap_times = []
+
     def build_phase(self, k, method="sampling"):
         assert method in ["sampling", "search", "searchwithinituniform"]
         assert len(self.Energy.indices) == 0   # ensure we are starting with an "empty" indices set
@@ -49,7 +50,7 @@ class AdaptiveSampler(object):
 
             if self.report_timing:
                 toc = perf_counter()
-                self.times.append(toc-tic)
+                self.build_times.append(toc-tic)
 
             # update distances and add point to index set
             self.Energy.add(idx)
@@ -86,7 +87,7 @@ class AdaptiveSampler(object):
 
                 if self.report_timing:
                     toc = perf_counter()
-                    self.times.append(toc-tic)
+                    self.swap_times.append(toc-tic)
                 
                 # if minimum swap value improves the current energy, then perform the swap and update counter
                 if r[jstar] < self.Energy.energy:
@@ -116,47 +117,80 @@ class AdaptiveSampler(object):
 
 
         elif method == "sampling":   # adaptive sampling swap
+
             
             # initialize counters, force swap prob vector, and best prototype trackers
-            t, w = 0, 0
+            t, w, u = 0, 0, 0
             p = np.zeros(k)
             best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]  # will track the best found energy and indices through adaptive swap moves
             
-            # Complete at most 2*k swap attempts
-            for u in range(2*k):
-                if self.report_timing:
-                    tic = perf_counter()
-                
-                # Step 1 : update cost vector and sample a proposal prototype 
-                q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # includes the power p from the Energy object computation
-                q_probs_den = q_probs_wo_st.sum()
-                s_prime = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_den)
-                p[w] = q_probs_wo_st[self.Energy.indices[t]] /q_probs_den # probability of not swapping at this current iteration
-                w += 1
-                # Step 2: if stagnated, then terminate (p = \inf case)
-                if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is None):
-                    break
+            # Complete at most 2*k swaps
+            if self.report_timing:
+                tic = perf_counter()
+            while u <= 2*k:
 
-                # Step 3: If stagnated, then force a swap (p < \inf case)
-                if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is not None):
+                if self.Energy.type == "lowrank":
+                    U = self.Energy.prep_sampling_swap() # precompute all downdatings for low-rank energy. 
+                                                        # (includes the power p in the computation)
+                    denom = U.sum(axis=1)
+                    p = U[list(range(k)),self.Energy.indices] / denom
+                    p = np.roll(p, -t)  # roll so that p[0] corresponds to current t index
+                    
+                    #### MAKE SURE right indices are chosen and update denom...
+
+                    # if stagnated, then terminate. With low-rank, we are always forcing a swap if possible. 
+                    # This is the case when no swap is possible.
+                    if np.isclose(np.prod(p), 1.0):
+                        break 
+
+                    # always force a swap in low-rank case 
                     probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))  # probabilities for selecting which prototype to force a swap
                     j = self.random_state.choice(range(k), p=probs)   
-                    t = (t + j + 1) % k 
-                    q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # with new index, compute cost vector probs
-                    q_probs_den = q_probs_wo_st.sum()                    
-                    force_swap_probs = q_probs_wo_st/(q_probs_den - q_probs_wo_st[self.Energy.indices[t]])  
+                    t = (t + j + 1) % k
+                    force_swap_probs = U[t,:]/(denom[t] - U[t,self.Energy.indices[t]])
                     force_swap_probs[self.Energy.indices[t]] = 0.0
                     assert np.isclose(force_swap_probs.sum(), 1.0) # check valid probability distribution
                     s_prime = self.random_state.choice(range(self.Energy.n), p=force_swap_probs) # sample the forced swap prototype
-                
-                # Step 4: perform the swap if swap is found
+
+                else:
+                    # Step 1 : update cost vector and sample a proposal prototype 
+                    q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # includes the power p from the Energy object computation
+                    q_probs_den = q_probs_wo_st.sum()
+                    s_prime = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_den)
+                    p[w] = q_probs_wo_st[self.Energy.indices[t]] /q_probs_den # probability of not swapping at this current iteration
+                    w += 1
+                    # Step 2: if stagnated, then terminate (p = \inf case)
+                    if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is None):
+                        break
+
+                    # Step 3: If stagnated, then force a swap (p < \inf case)
+                    if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is not None):
+                        probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))  # probabilities for selecting which prototype to force a swap
+                        j = self.random_state.choice(range(k), p=probs)   
+                        t = (t + j + 1) % k 
+                        q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # with new index, compute cost vector probs
+                        q_probs_den = q_probs_wo_st.sum()                    
+                        force_swap_probs = q_probs_wo_st/(q_probs_den - q_probs_wo_st[self.Energy.indices[t]])  
+                        force_swap_probs[self.Energy.indices[t]] = 0.0
+                        assert np.isclose(force_swap_probs.sum(), 1.0) # check valid probability distribution
+                        s_prime = self.random_state.choice(range(self.Energy.n), p=force_swap_probs) # sample the forced swap prototype
+                    
+                # Step 4: perform the swap if swap was found
                 if s_prime != self.Energy.indices[t]:
+                    if self.report_timing: # if timing, record time before it 
+                        toc = perf_counter()
+                        self.swap_times.append(toc-tic)
+                        
                     self.Energy.swap(t, s_prime)
+                    u += 1                   # increment swap counter
                     w = 0                       # reset stagnation counter
                     # check if this is best energy found so far
                     if self.Energy.energy < best_energy:
                         best_energy = self.Energy.energy
                         best_inds = self.Energy.indices[:]
+                    
+                    if self.report_timing:
+                        tic = perf_counter()
 
 
                 t = (t + 1) % k    # increment index counter
