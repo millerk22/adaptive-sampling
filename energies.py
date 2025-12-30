@@ -338,38 +338,43 @@ class LowRankEnergy(EnergyClass):
         self.cholesky_delete(self.L, t)
 
         # downdate W and f
-        b = solve_triangular(self.L, self.G[self.indices, self.indices[t]], lower=True) 
-        b = solve_triangular(self.L, b, lower=True, trans='C')
-        b[t] = -1.0
-        self.W  += b[:,np.newaxis] * self.W
-        b_t = np.concatenate((b[:t], b[t+1:]))
-        self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(b_t, b_t).real)
-            
-        return 
-    
-    def update(self, t, i): # having downdated the t^th prototype, now add i \in {1,...,n} \ indices
-        k_curr = len(self.indices)
-        assert t < k_curr and t >= 0
-        assert self.L[t,t] == 1.0    # check to make sure we are going to update after a downdate
-
-        # solve for some auxiliary variable
-        a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
-        v = self.G[i,i] - np.vdot(a[:t], a[:t]).real
+        a = solve_triangular(self.L, self.G[self.indices, self.indices[t]], lower=True) 
         b = solve_triangular(self.L, a, lower=True, trans='C')
         b[t] = -1.0
-        c = self.G[self.indices[t+1:], i] - self.L[t+1:, :t] @ a[:t]
+        self.W  += np.outer(b, self.W[t,:])
+        a_t = np.concatenate((a[:t], a[t+1:]))
+        inds_t = self.indices[:t] + self.indices[t+1:]
+        self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
 
-        # correct the Cholesky factor L matrix
-        self.L[t,:t] = a[:t].conj()
-        self.L[t,t] = np.sqrt(v)
-        self.L[t+1:, t] = c/ np.sqrt(v)
-        self.L[t+1:, t+1:] = self.cholesky_downdate(self.L[t+1:, t+1:], c/np.sqrt(v))
+        return 
+    
+    def update(self, t, i): # (Algorithm 9.5)
+        # t is the index in self.indices to be replaced with i (t = i, i = s_i' in the notation of the paper)
+        k_curr = len(self.indices)
+        assert t < k_curr and t >= 0
+
+        # check the the decomposition is ready for the update (i.e., has does not have an active prototype at index t)
+        assert self.L[t,t] == 1.0
+        assert np.isclose(self.W[t, :], 0.0).all()
+        print(self.f, self.f[t], t)
+        assert np.isclose(self.f[t], 0.0)
+        
+        # solve for some auxiliary variable
+        a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
+        a_t = np.concatenate((a[:t], a[t+1:]))
+        v = self.G[i,i].real - np.vdot(a_t, a_t).real
+        b = solve_triangular(self.L, a, lower=True, trans='C')
+        b[t] = -1.0
 
         # update f, W, d
         self.f += np.abs(b)**2. / v
-        r = self.G[:,i] - self.W.conj().T @ self.G[self.indices, i]
-        self.W -= np.outer(b, r.conj())/ v
-        self.d -= np.abs(r)**2. / v
+        rstar = self.G[i,:] -  self.G[i, self.indices] @ self.W
+        self.W -= np.outer(b, rstar)/ v
+        self.d -= np.abs(rstar)**2. / v
+
+        # update energy's indices and change the cholesky factor via add
+        self.indices[t] = i
+        self.cholesky_add(self.L, self.G[self.indices, i] , t) # still fixing...
 
         return 
 
@@ -408,15 +413,24 @@ class LowRankEnergy(EnergyClass):
         for j in range(p):
             r = np.sqrt(abs(L[j,j])**2. + abs(a[j])**2.)
             c = L[j,j] / r
-            s = a[j] / r
+            s = a[j].conj() / r
             L[j,j] = r
-            L[j+1:,j] = c * L[j+1:,j] + s.conj() * a[j+1:]
-            a[j+1:] = (a[j+1:] - s * L[j+1:,j]) / c
+            L[j+1:,j] = c * L[j+1:,j] + s * a[j+1:]
+            a[j+1:] = (a[j+1:] - s.conj() * L[j+1:,j]) / c
         return 
     
     @staticmethod
-    def cholesky_add(L, a):
-        raise NotImplementedError("Cholesky add not yet implemented.")
+    def cholesky_add(L, z, t):
+        assert t < L.shape[0] and t >= 0
+        a = solve_triangular(L[:t,:t], z[:t], lower=True)
+        v = z[t] - np.vdot(a, a).real
+        c = z[t+1:] - L[t+1:,:t] @ a
+        T = LowRankEnergy.cholesky_downdate(L[t+1:,t+1:], c/np.sqrt(v))
+        L[t,t] = np.sqrt(v)
+        L[t,:t] = a.conj()
+        L[t+1:,t] = c / np.sqrt(v)
+        L[t+1:,t+1:] = T
+        return
 
     @staticmethod
     def cholesky_downdate(L, a):
@@ -426,16 +440,12 @@ class LowRankEnergy(EnergyClass):
         """
         p = L.shape[0]
         for j in range(p):
-            r = abs(L[j,j])**2. - abs(a[j])**2.
-            assert r > 0, "Downdate would result in non-positive semidefinite matrix"
-            r = np.sqrt(r)
+            r = np.sqrt(abs(L[j,j])**2. + abs(a[j])**2.)
             c = r / L[j,j]
-            s = a[j] / L[j,j]
+            s = a[j].conj() / L[j,j]
             L[j,j] = r
             L[j+1:,j] = (L[j+1:,j] - s * a[j+1:]) / c
             a[j+1:] = c * a[j+1:] - s * L[j+1:,j]
-    
-    
 
 
 
