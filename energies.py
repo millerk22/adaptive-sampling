@@ -375,8 +375,11 @@ class LowRankEnergy(EnergyClass):
         self.W  += np.outer(b, self.W[t,:])
         a_t = np.concatenate((a[:t], a[t+1:]))
         inds_t = self.indices[:t] + self.indices[t+1:]
-        self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
 
+        print("pre-downdate f[t]: ", self.f[t])
+        self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
+        print("post-downdate f[t]: ", self.f[t])
+        
         # update these values 
         self.indices[t] = -1  # mark as removed
         self.dists = np.sqrt(self.d)  
@@ -395,9 +398,11 @@ class LowRankEnergy(EnergyClass):
         assert self.L[t,t] == 1.0
         assert np.isclose(self.W[t, :], 0.0).all()
         assert np.isclose(self.f[t], 0.0)
+
+        inds_t = self.indices[:t] + self.indices[t+1:]
         
         # solve for some auxiliary variable
-        a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
+        a = solve_triangular(self.L, self.G[inds_t, i], lower=True)
         a_t = np.concatenate((a[:t], a[t+1:]))
         v = self.G[i,i].real - np.vdot(a_t, a_t).real
         b = solve_triangular(self.L, a, lower=True, trans='C')
@@ -405,12 +410,12 @@ class LowRankEnergy(EnergyClass):
 
         # update f, W, d
         self.f += np.abs(b)**2. / v
-        rstar = self.G[i,:] -  self.G[i, self.indices] @ self.W
+        rstar = self.G[i,:] -  self.G[i, inds_t] @ self.W
         self.W -= np.outer(b, rstar)/ v
         self.d -= np.abs(rstar)**2. / v
 
         # change the cholesky factor via add
-        self.cholesky_add(self.L, self.G[self.indices, i] , t)
+        self.cholesky_add(self.L, self.G[inds_t, i] , t)
 
         # update energy's values 
         self.indices[t] = i

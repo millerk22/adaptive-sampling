@@ -167,7 +167,7 @@ class AdaptiveSampler(object):
             # Complete at most 2*k swaps
             while u <= 2*k:
                 if self.Energy.type == "lowrank":
-                    U = self.Energy.prep_sampling_swap() # precompute all downdatings for low-rank energy. 
+                    U = self.Energy.prep_all_downdates(returnU=True) # precompute all downdatings for low-rank energy. 
                                                         # (includes the power p in the computation)
                     denom = U.sum(axis=1)
                     p = U[list(range(k)),self.Energy.indices] / denom
