@@ -118,7 +118,7 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
                 sampler.build_phase(k_todo, method=build_method)
                 if args.time:
-                    results[method_str]["times"].append(sampler.times)
+                    results[method_str]["times"].append(sampler.build_times)
 
             results[method_str]["indices"].append(Energy.indices)
             results[method_str]["energy"].append(Energy.energy)
@@ -134,7 +134,6 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
             energy_swap = []
             energy_values_swap = []
             times_swap = []
-            cycles_swap = []
             num_actual_swaps = []
             num_forced_swaps, swap_force_probs, forced_iters = [], [], []
 
@@ -144,8 +143,8 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                     Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
                 elif args.energy == "cluster":
                     Energy = ClusteringEnergy(X, p=p)
-                elif args.energy == "cluster-dense":
-                    Energy = ClusteringEnergyDense(X, p=p)
+                elif args.energy == "cluster-nongram":
+                    Energy = ClusteringEnergyNonGram(X, p=p)
                 else:
                     print(f"Energy type = {args.energy} not recognized, skipping")
                     break
@@ -155,15 +154,13 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
 
                 # instantiate adaptive sampler
                 sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                max_swaps = k_**2 #if Energy.type == "conic" else 20*k_**2
 
                 if k_ > 1:
-                    _ = sampler.swap_phase(method=swap_method, max_swaps=max_swaps, debug=True)
+                    _ = sampler.swap_phase(method=swap_method, debug=True)
                     if args.time:
-                        times_swap.append(sampler.times)
+                        times_swap.append(sampler.swap_times)
                     
-                    if swap_method == "search":
-                        cycles_swap.append(sampler.num_cycles)
+                    
 
                 indices_swap.append(sampler.Energy.indices)
                 energy_swap.append(sampler.Energy.energy)
@@ -186,8 +183,6 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                 results[method_str]["swap_force_probs"].append(swap_force_probs)
                 results[method_str]["forced_iters"].append(forced_iters)
                 results[method_str]["num_actual_swaps"].append(sampler.num_actual_swaps)
-            if swap_method == "search":
-                results[method_str]["num_cycles"].append(cycles_swap)
             if args.time:
                 # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
                 results[method_str]["times"].append(times_swap)

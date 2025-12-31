@@ -105,7 +105,7 @@ class ClusteringEnergy(EnergyClass):
         if len(self.indices) == 1:
             # when adding the first index, we just set dists to be the distances to that point
             self.dists = self.D[:,i].copy()
-            self.h = np.zeros((self.n,))
+            self.h = np.zeros((self.n,), dtype=int)
         else:
             # when adding subsequent indices, we need to update dists and q2
             mask = self.D[:,i] < self.dists 
@@ -214,6 +214,17 @@ class ClusteringEnergy(EnergyClass):
         
         return r 
     
+    def prep_all_downdates(self, returnU=True):
+        U = np.full((self.k, self.n), self.dists)
+        U[self.h, np.arange(self.n)] = self.q2
+        if self.p is None:
+            self.U = (U == np.max(U, axis=0)).astype(float)
+        else:
+            self.U = U**(self.p)
+        if returnU:
+            return self.U
+        return 
+    
 
 
 
@@ -254,6 +265,25 @@ class LowRankEnergy(EnergyClass):
         self.W = np.zeros((self.k, self.n), dtype=self.X.dtype)
         self.L = np.zeros((self.k, self.k), dtype=self.X.dtype)
         self.f = np.zeros((self.k,))
+        return 
+    
+    def prep_search_swap(self):
+        # pad W, L, f with zeros to allow for temporary (k+1) prototypes during search swap computations
+        self.W = np.vstack((self.W, np.zeros((1, self.n), dtype=self.X.dtype)))
+        self.L = np.vstack((self.L, np.zeros((1, self.L.shape[1]), dtype=self.X.dtype)))
+        self.L = np.hstack((self.L, np.zeros((self.L.shape[0], 1), dtype=self.X.dtype)))
+        self.L[-1,-1] = 1.0
+        self.f = np.concatenate((self.f, np.array([0.0])))
+        self.indices = self.indices + [-1]  # placeholder for temporary (k+1) prototype
+        return 
+    
+    def end_search_swap(self):
+        # remove the temporary (k+1) prototype data at the end of search swap computations
+        self.W = self.W[:-1,:]
+        self.L = self.L[:-1,:-1]
+        self.f = self.f[:-1]
+        self.indices = self.indices[:-1]
+        return
 
     def add(self, i):   # update the interpolative decomposition (Algorithm 9.1)
         k_curr = len(self.indices)
@@ -329,8 +359,8 @@ class LowRankEnergy(EnergyClass):
         return Q
     
     def downdate(self, t): # (Algorithm 9.4)
-        k_curr = len(self.indices)
-        assert t < k_curr and t >= 0
+        k_max = self.f.size
+        assert t < k_max and t >= 0
 
         # downdate d first
         self.d += np.abs(self.W[t, :])**2 / self.f[t]
@@ -347,14 +377,21 @@ class LowRankEnergy(EnergyClass):
         inds_t = self.indices[:t] + self.indices[t+1:]
         self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
 
+        # update these values 
+        self.indices[t] = -1  # mark as removed
+        self.dists = np.sqrt(self.d)  
+        self.compute_energy()
+        self.energy_values.append(self.energy)
+
         return 
     
     def update(self, t, i): # (Algorithm 9.5)
         # t is the index in self.indices to be replaced with i (t = i, i = s_i' in the notation of the paper)
-        k_curr = len(self.indices)
-        assert t < k_curr and t >= 0
+        k_max = self.f.size
+        assert t < k_max and t >= 0
 
         # check the the decomposition is ready for the update (i.e., has does not have an active prototype at index t)
+        assert self.indices[t] == -1
         assert self.L[t,t] == 1.0
         assert np.isclose(self.W[t, :], 0.0).all()
         assert np.isclose(self.f[t], 0.0)
@@ -372,14 +409,20 @@ class LowRankEnergy(EnergyClass):
         self.W -= np.outer(b, rstar)/ v
         self.d -= np.abs(rstar)**2. / v
 
-        # update energy's indices and change the cholesky factor via add
-        self.indices[t] = i
+        # change the cholesky factor via add
         self.cholesky_add(self.L, self.G[self.indices, i] , t)
+
+        # update energy's values 
+        self.indices[t] = i
+        self.dists = np.sqrt(self.d)   
+        self.compute_energy()
+        self.energy_values.append(self.energy)
 
         return 
 
-    def prep_sampling_swap(self, returnU=True):
+    def prep_all_downdates(self, returnU=True):
         U = np.outer(np.ones(self.k), self.d) + np.abs(self.W)**2 / self.f[:, np.newaxis]
+        U = np.clip(U, 0.0, None)
         if self.p is None:
             self.U = (U == np.max(U, axis=0)).astype(float)
         else:
@@ -397,8 +440,10 @@ class LowRankEnergy(EnergyClass):
         return #r 
 
     def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to sampling proportional to ||x_i|| 
+            return np.real(np.diagonal(self.G).copy())
         if self.U is None:
-            self.prep_sampling_swap(returnU=False)
+            self.prep_all_downdates(returnU=False)
         return self.U[idx_to_swap,:]
     
     @staticmethod
@@ -509,7 +554,7 @@ class ConicHullEnergy(EnergyClass):
         return
 
     def compute_swap_distances(self, idx_to_swap):
-        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to  sampling over the norms of each datapoint
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to sampling via ||x_i||
             dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
         else:
             dists, _ = self.nnls_OGM_gram(idx_to_swap=idx_to_swap, returnH=False)
