@@ -261,9 +261,10 @@ class AdaptiveSampler(object):
             # At the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
             all_energy_values = self.Energy.energy_values[:]  # make copy of old energy values (have all the swaps recorded)
-            print("Best energy found during sampling swap:", best_energy)
-            print("Energy at end of sampling swap:", self.Energy.energy)
-            print("Re-initializing Energy object to best found indices...")
+            if debug:
+                print("Best energy found during sampling swap:", best_energy)
+                print("Energy at end of sampling swap:", self.Energy.energy)
+                print("Re-initializing Energy object to best found indices...")
             self.Energy.__init__(self.Energy.X, p=self.Energy.p)  # re-initialize Energy object
             self.Energy.init_set(best_inds)
             self.Energy.energy_values = all_energy_values + [self.Energy.energy_values[-1]]  # overwrite the energy_values list to have full history for later plotting
