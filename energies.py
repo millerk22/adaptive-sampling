@@ -215,10 +215,10 @@ class ClusteringEnergy(EnergyClass):
         return r 
     
     def prep_all_downdates(self, returnU=True):
-        U = np.full((self.k, self.n), self.dists)
+        U = np.tile(self.dists, (self.k, 1))
         U[self.h, np.arange(self.n)] = self.q2
         if self.p is None:
-            self.U = (U == np.max(U, axis=0)).astype(float)
+            self.U = U.max(axis=1)[:,np.newaxis]
         else:
             self.U = U**(self.p)
         if returnU:
@@ -374,14 +374,9 @@ class LowRankEnergy(EnergyClass):
         b[t] = -1.0
         self.W  += np.outer(b, self.W[t,:])
         a_t = np.concatenate((a[:t], a[t+1:]))
-        inds_t = self.indices[:t] + self.indices[t+1:]
-
-        print("pre-downdate f[t]: ", self.f[t])
         self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
-        print("post-downdate f[t]: ", self.f[t])
         
-        # update these values 
-        self.indices[t] = -1  # mark as removed
+        # update these values
         self.dists = np.sqrt(self.d)  
         self.compute_energy()
         self.energy_values.append(self.energy)
@@ -389,36 +384,47 @@ class LowRankEnergy(EnergyClass):
         return 
     
     def update(self, t, i): # (Algorithm 9.5)
+        '''
+        __Note:__ This update function requires the decomposition to be prepared for an update:
+            * L has a 1.0 at (t,t) and zeros below it in column t and zeros in row t
+            * W has zeros in row t
+            * f has a 0.0 at index t
+        This is because we assume that either (1) a downdate has already been performed at index t 
+        or (2) we are performing an update after augmenting the decomposition for search swap moves.
+
+        Furthermore, the t^th value in self.indices will be __ignored__ and replaced with i during the update. But 
+        this function is written so that it does not actually remove the t^th index from self.indices; it simply overwrites it.
+        '''
         # t is the index in self.indices to be replaced with i (t = i, i = s_i' in the notation of the paper)
         k_max = self.f.size
         assert t < k_max and t >= 0
 
         # check the the decomposition is ready for the update (i.e., has does not have an active prototype at index t)
-        assert self.indices[t] == -1
         assert self.L[t,t] == 1.0
+        assert np.isclose(self.L[t+1:,t], 0.0).all()
         assert np.isclose(self.W[t, :], 0.0).all()
         assert np.isclose(self.f[t], 0.0)
-
-        inds_t = self.indices[:t] + self.indices[t+1:]
         
-        # solve for some auxiliary variable
-        a = solve_triangular(self.L, self.G[inds_t, i], lower=True)
+        # solve for some auxiliary variables
+        a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
         a_t = np.concatenate((a[:t], a[t+1:]))
         v = self.G[i,i].real - np.vdot(a_t, a_t).real
         b = solve_triangular(self.L, a, lower=True, trans='C')
         b[t] = -1.0
 
-        # update f, W, d
+        # update f, W, and d
         self.f += np.abs(b)**2. / v
-        rstar = self.G[i,:] -  self.G[i, inds_t] @ self.W
+        rstar = self.G[i,:] -  self.G[i, self.indices] @ self.W
         self.W -= np.outer(b, rstar)/ v
         self.d -= np.abs(rstar)**2. / v
 
-        # change the cholesky factor via add
-        self.cholesky_add(self.L, self.G[inds_t, i] , t)
+        np.clip(self.d, 0.0, None, out=self.d)  # clip small negatives from numerical errors
+
+        # update indices and change the cholesky factor via add
+        self.indices[t] = i
+        self.cholesky_add(self.L, self.G[self.indices, i] , t)
 
         # update energy's values 
-        self.indices[t] = i
         self.dists = np.sqrt(self.d)   
         self.compute_energy()
         self.energy_values.append(self.energy)
@@ -426,10 +432,10 @@ class LowRankEnergy(EnergyClass):
         return 
 
     def prep_all_downdates(self, returnU=True):
-        U = np.outer(np.ones(self.k), self.d) + np.abs(self.W)**2 / self.f[:, np.newaxis]
+        U = np.tile(self.d, (self.f.size, 1)) + np.abs(self.W)**2 / self.f[:, np.newaxis] # do f.size in case of search swap prep, where we have not overwritten self.k...
         U = np.clip(U, 0.0, None)
         if self.p is None:
-            self.U = (U == np.max(U, axis=0)).astype(float)
+            self.U = U.max(axis=1)[:,np.newaxis]
         else:
             self.U = U**(0.5*self.p)
         if returnU:

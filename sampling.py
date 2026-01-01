@@ -60,11 +60,6 @@ class AdaptiveSampler(object):
         assert method in ["search", "sampling"]
         k = len(self.Energy.indices)
         n = self.Energy.n
-
-        if debug:
-            inds = [self.Energy.indices[:]]
-            energy_vals = [self.Energy.energy]
-            dists_vals = [self.Energy.dists.copy()]
         
         if method == "search" and self.Energy.type == "lowrank":
             self.Energy.prep_search_swap() # precompute all updatings for low-rank energy
@@ -76,32 +71,60 @@ class AdaptiveSampler(object):
                     s = (s + 1) % n 
                     w += 1
                     continue 
-
+                
+                curr_energy = np.copy(self.Energy.energy)
                 self.Energy.update(t=k, i=s)  # update prototype set at (k+1)th prototype spot with current s 
                 U = self.Energy.prep_all_downdates(returnU=True)  # precompute all downdatings including the new prototype at index k
                 
                 # choose best potential prototype swap, i
-                vals = U.sum(axis=1)            # prep_all_downdates() already includes the power p in the computation
+                if self.Energy.p is None:
+                    vals = U.flatten()  # already reduced to max entry in prep_all_downdates()
+                else:
+                    # prep_all_downdates() already includes the power p in the computation
+                    vals = U.sum(axis=1)**(1./self.Energy.p)            
                 t_poss = np.where(np.isclose(vals,np.min(vals)))[0]
                 t = t_poss[self.random_state.choice(len(t_poss))]
                 
-                assert np.isclose(vals[-1], self.Energy.energy)  # check that the last entry corresponds to current energy 
-                if vals[t] < self.Energy.energy:  # did this swap improve energy?
+                # check that the last entry corresponds to current energy 
+                assert np.isclose(vals[-1], curr_energy)  
+                
+                if vals[t] < curr_energy and t != k:  # did this swap improve energy?
+                    if debug:
+                        print(f"before downdate to swap at {t}, {self.Energy.indices[t]} and {self.Energy.indices[-1]} :")
+                        print("L: ", np.round(self.Energy.L, 1))
+                        print("W: ", np.round(self.Energy.W, 1))
+                        print("f: ", np.round(self.Energy.f, 1))
+                        print("d: ", np.round(self.Energy.d, 1))
+                        print("indices: ", self.Energy.indices)
                     self.Energy.downdate(t)
 
+                    if debug:
+                        print("after downdate, before interchange:")
+                        print("L: ", np.round(self.Energy.L, 1))
+                        print("W: ", np.round(self.Energy.W, 1))
+                        print("f: ", np.round(self.Energy.f, 1))
+                        print("d: ", np.round(self.Energy.d, 1))
+                        print("indices: ", self.Energy.indices)
                     # interchange the t^th row and the last row to finalize this swap
-                    self.Energy.indices[t] = s 
-                    self.Energy.indices[-1] = -1
+                    self.Energy.indices[t], self.Energy.indices[-1] = s, self.Energy.indices[t]
                     self.Energy.W[[t,-1],:] = self.Energy.W[[-1,t],:]   # downdate() already zeroes out what was the t^th row/entries
                     self.Energy.f[[t,-1]] = self.Energy.f[[-1,t]]
 
                     # change the Cholesky factor accordingly
-                    LowRankEnergy.cholesky_add(self.Energy.L, self.Energy.G[self.Energy.indices[:k], s], t)
+                    LowRankEnergy.cholesky_add(self.Energy.L[:k,:k], self.Energy.G[self.Energy.indices[:k], s], t)
                     LowRankEnergy.cholesky_delete(self.Energy.L, k)
                     if self.report_timing:
                         toc = perf_counter()
                         self.swap_times.append((toc-tic, w))  # record time and number of iterations until swap
                     w = 0
+
+                    if debug:
+                        print("after downdate, after interchange:")
+                        print("L: ", np.round(self.Energy.L, 1))
+                        print("W: ", np.round(self.Energy.W, 1))
+                        print("f: ", np.round(self.Energy.f, 1))
+                        print("d: ", np.round(self.Energy.d, 1))
+                        print("indices: ", self.Energy.indices)
                 else:
                     # swap was unsuccessful, so revert the temporary update
                     self.Energy.downdate(k)
@@ -159,7 +182,7 @@ class AdaptiveSampler(object):
             t, w, u = 0, 0, 0
             p = np.zeros(k)
             best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]  # will track the best found energy and indices through adaptive swap moves
-            
+            self.best_energy_vals = self.Energy.energy_values[:]  # track best energy values
             
             if self.report_timing:
                 tic = perf_counter()
@@ -224,6 +247,9 @@ class AdaptiveSampler(object):
                     if self.Energy.energy < best_energy:
                         best_energy = self.Energy.energy
                         best_inds = self.Energy.indices[:]
+
+                   # record the best energy value at this swap (for plots in paper)
+                    self.best_energy_vals.append(best_energy)
                     
                     if self.report_timing:
                         tic = perf_counter()
@@ -232,31 +258,22 @@ class AdaptiveSampler(object):
                 t = (t + 1) % k    # increment index counter
 
 
-            # at the end of the swap phase, set the indices to the best found
+            # At the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
             all_energy_values = self.Energy.energy_values[:]  # make copy of old energy values (have all the swaps recorded)
-            if self.Energy.type == "cluster":
-                self.Energy = ClusteringEnergy(self.Energy.X, p=self.Energy.p)
-            elif self.Energy.type == "lowrank":
-                self.Energy = LowRankEnergy(self.Energy.X, p=self.Energy.p)
-            elif self.Energy.type == "conic":
-                self.Energy = ConicHullEnergy(self.Energy.X, p=self.Energy.p)
-            else:
-                raise NotImplementedError(f"Energy type {self.Energy.type} not recognized...")
-            
+            print("Best energy found during sampling swap:", best_energy)
+            print("Energy at end of sampling swap:", self.Energy.energy)
+            print("Re-initializing Energy object to best found indices...")
+            self.Energy.__init__(self.Energy.X, p=self.Energy.p)  # re-initialize Energy object
             self.Energy.init_set(best_inds)
-
-            if debug:
-                self.best_energy_vals = all_energy_values[:len(best_inds)] + self.best_energy_vals
-                self.Energy.energy_values = all_energy_values + [self.Energy.energy_values[-1]]  # overwrite the energy_values list to have full history for later plotting
+            self.Energy.energy_values = all_energy_values + [self.Energy.energy_values[-1]]  # overwrite the energy_values list to have full history for later plotting
+            
             if not np.isclose(self.Energy.energy, best_energy): # check that we have properly reset the Energy object
-                print(best_energy, self.Energy.energy, "not same?")
+                print("Warning...: ", best_energy, self.Energy.energy, "re-initialized energy is not the same?")
             
 
         else:
             raise NotImplementedError(f"Method {method} not recognized for swap phase.")
-
-        if debug:
-            return inds, energy_vals, dists_vals
+        
         return 
 
