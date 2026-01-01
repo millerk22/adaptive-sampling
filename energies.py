@@ -376,6 +376,10 @@ class LowRankEnergy(EnergyClass):
         a_t = np.concatenate((a[:t], a[t+1:]))
         self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
         
+        # is this going to be bad to do? Seems like we have a problem with numerical instability if we don't do this...
+        self.f[t] = 0.0  
+        self.W[t, :] = 0.0
+        
         # update these values
         self.dists = np.sqrt(self.d)  
         self.compute_energy()
