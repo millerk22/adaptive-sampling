@@ -28,16 +28,6 @@ class AdaptiveSampler(object):
                 # arbitratily choose the minimizer of the search
                 min_idxs = np.where(q_search_p == np.min(q_search_p))[0]
                 idx = self.random_state.choice(min_idxs)
-            elif method == "searchwithinituniform":
-                if len(self.Energy.indices) == 0:
-                    idx = self.random_state.choice(range(self.Energy.n))
-                else:
-                    # compute the search energies for all the non-included points
-                    q_search_p = self.Energy.compute_search_values() # includes the power p in the computation in self.Energy
-
-                    # arbitratily choose the minimizer of the search
-                    min_idxs = np.where(q_search_p == np.min(q_search_p))[0]
-                    idx = self.random_state.choice(min_idxs)
 
             else: # adaptive-sampling build
                 if self.Energy.p is not None:
@@ -136,13 +126,17 @@ class AdaptiveSampler(object):
             self.Energy.end_search_swap() 
 
         elif method == "search": # adaptive-search swap
-            t, counter = 0, 0
-            while counter < n:
+            i, w = 0, 0
+            while w < n:
                 if self.report_timing:
                     tic = perf_counter()
+
+                # skip x_i if is already in the prototype set
+                if i in self.Energy.indices:
+                    continue
                 
-                # construct the eager swap vector, r_S/s_i \cup t
-                r = self.Energy.compute_eager_swap_values(idx=t) 
+                # construct the eager swap vector, r_i vectors (with prototype indices {S/s_t \cup i} for each s_t in S currently)
+                r = self.Energy.compute_eager_swap_values(idx=i) 
                 assert r.size == k
 
                 # select one of the minimizers
@@ -155,29 +149,23 @@ class AdaptiveSampler(object):
                 
                 # if minimum swap value improves the current energy, then perform the swap and update counter
                 if r[jstar] < self.Energy.energy:
-                    if self.Energy.indices[jstar] != t: # make sure we are actually making a swap
-                        # print("swapping", self.Energy.indices[jstar], "with", t, "old energy", self.Energy.energy, "old indices", self.Energy.indices)
-                        # print(r)
-                        # print(jstar, r[jstar], self.Energy.energy)
+                    if self.Energy.indices[jstar] != i: # make sure we are actually making a swap
                         old_idx = self.Energy.indices[:][jstar]
-                        self.Energy.swap(jstar, t)
-                        # print("\tnew energy", self.Energy.energy, "new indices", self.Energy.indices, "r[jstar]", r[jstar])
-                        # print("\t", r[jstar], self.Energy.energy, np.isclose(self.Energy.energy, r[jstar]))
+                        self.Energy.swap(jstar, i)
                         if not np.isclose(self.Energy.energy, r[jstar]):
-                            print(jstar, old_idx, t, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
-                        counter = 0
+                            print("Warning: Adaptive Search Swap")
+                            print("/t", jstar, old_idx, i, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
+                        w = 0
                     else:
-                        counter += 1
+                        w += 1
                 else:
-                    counter += 1
+                    w += 1
                 
                 # update index
-                t += 1 
-                t = t % n
+                i += 1 
+                i = i % n
 
         elif method == "sampling":   # adaptive sampling swap
-
-            
             # initialize counters, force swap prob vector, and best prototype trackers
             t, w, u = 0, 0, 0
             p = np.zeros(k)

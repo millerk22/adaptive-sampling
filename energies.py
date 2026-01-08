@@ -63,13 +63,13 @@ class EnergyClass(object):
         
         search_dists = self.search_distances(candidates)
         
-        # we make the assumption that we don't need to consider already selected points in our search values. We assume that their search 
+        # weassume that we don't need to consider already selected points in our search values. We assume that their search 
         # value--even in the case of swaps--is simply the current energy.  
         all_search_vals = np.ones(self.n)*self.energy
         if self.p is not None:
-            all_search_vals[candidates] = np.array([np.linalg.norm(s_dist, ord=self.p) for s_dist in search_dists])
+            all_search_vals[candidates] = np.linalg.norm(search_dists, ord=self.p, axis=1)
         else:
-            all_search_vals[candidates] = np.array([np.max(s_dist) for s_dist in search_dists])
+            all_search_vals[candidates] = np.max(search_dists, axis=1)
 
         return all_search_vals
     
@@ -183,12 +183,12 @@ class ClusteringEnergy(EnergyClass):
         return distances 
     
     def search_distances(self, candidates):
+        # Q[i,:] = q_{+i} vector in Alg 8.2
         if len(self.indices) == 0:
-            search_dists = self.D[:,candidates].T
+            Q = self.D[:,candidates].T
         else:
-            search_dists = np.array([np.minimum(self.dists, self.D[:,c]) for c in candidates])
-        
-        return search_dists
+            Q = np.minimum(self.dists, self.D[candidates,:])
+        return Q
 
     def compute_swap_distances(self, idx_to_swap):
         if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
