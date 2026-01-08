@@ -19,7 +19,6 @@ class EnergyClass(object):
         self.energy = None
         self.indices = []
         self.dists = np.ones(self.n)
-        self.energy_values = []
         self.type = None
         if sps.issparse(X):
             self.Xfro_norm2 = sps.linalg.norm(self.X, ord='fro')**2.
@@ -126,7 +125,7 @@ class ClusteringEnergy(EnergyClass):
 
         # compute the energy            
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
         return 
     
 
@@ -168,7 +167,7 @@ class ClusteringEnergy(EnergyClass):
         self.q2[Vor2] = Dv2[np.arange(numV2),h1h2[:,1]].flatten()
         
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
     
     def compute_distances(self, inds=None):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
@@ -335,7 +334,7 @@ class LowRankEnergy(EnergyClass):
         self.indices.append(i)
         self.dists = np.sqrt(self.d)   # Euclidean distances to the span
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
         return
 
     def search_distances(self, candidates):  # adaptive search build
@@ -383,7 +382,7 @@ class LowRankEnergy(EnergyClass):
         # update these values
         self.dists = np.sqrt(self.d)  
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
 
         return 
     
@@ -431,7 +430,7 @@ class LowRankEnergy(EnergyClass):
         # update energy's values 
         self.dists = np.sqrt(self.d)   
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
 
         return 
 
@@ -565,7 +564,7 @@ class ConicHullEnergy(EnergyClass):
         self.H[:len(self.indices),:] = H 
         self.dists = dists 
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
         return
 
     def compute_swap_distances(self, idx_to_swap):
@@ -585,7 +584,7 @@ class ConicHullEnergy(EnergyClass):
         self.H = H   # assuming swap is only done with len(self.indices) = self.k
         self.dists = dists 
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
     
     def search_distances(self, candidates):
         if self.verbose:
@@ -760,7 +759,7 @@ class ClusteringEnergyNonGram(EnergyClass):
             self.dists = self.D[0,:].copy()
         self.indices.append(i)
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
         return 
     
     def swap(self, t, i):
@@ -771,7 +770,7 @@ class ClusteringEnergyNonGram(EnergyClass):
         self.D[t,:] = self.compute_distances(i)
         self.dists = np.min(self.D, axis=0) 
         self.compute_energy()
-        self.energy_values.append(self.energy)
+        
     
     def compute_distances(self, inds):
         if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:

@@ -2,15 +2,33 @@ import numpy as np
 from energies import *
 from time import perf_counter
 
-
-class AdaptiveSampler(object):
-    def __init__(self, Energy_, seed=42, report_timing=False):
-        self.Energy = Energy_ 
-        self.seed = seed
-        self.report_timing = report_timing
-        self.random_state = np.random.RandomState(self.seed)
+class InfoRecorder(object):
+    def __init__(self):
         self.build_times = []
         self.swap_times = []
+        self.build_values = []
+        self.swap_values = []
+        self.swap_stag = []
+    
+    def build_record(self, t, e):
+        self.build_times.append(t)
+        self.build_values.append(e)
+    
+    def swap_record(self, t, e, w):
+        self.swap_times.append(t)
+        self.swap_values.append(e)
+        self.swap_stag.append(w)
+        
+
+class AdaptiveSampler(object):
+    def __init__(self, Energy_, seed=42, record=False):
+        self.Energy = Energy_ 
+        self.seed = seed
+        self.random_state = np.random.RandomState(self.seed)
+        if record:
+            self.infoRecorder = InfoRecorder()
+        else:
+            self.infoRecorder = None
 
     def build_phase(self, k, method="sampling"):
         assert method in ["sampling", "search", "searchwithinituniform"]
@@ -18,8 +36,7 @@ class AdaptiveSampler(object):
         self.Energy.set_k(k)                   # allocate memory in the Energy object for the k points to be chosen
 
         for i in range(k):
-            if self.report_timing:
-                tic = perf_counter()
+            tic = perf_counter()
             
             if method == "search": # adaptive-search build
                 # compute the search energies for all the non-included points
@@ -38,25 +55,28 @@ class AdaptiveSampler(object):
                     max_idxs = np.where(self.Energy.dists == self.Energy.energy)[0]
                     idx = self.random_state.choice(max_idxs)
 
-            if self.report_timing:
-                toc = perf_counter()
-                self.build_times.append(toc-tic)
-
             # update distances and add point to index set
             self.Energy.add(idx)
+            
+            if self.infoRecorder:
+                toc = perf_counter()
+                self.infoRecord.record_build(toc-tic, self.Energy.energy)
+
+            
         return 
     
-    def swap_phase(self, method="search", debug=False):
+    def swap_phase(self, method="sampling", debug=False, max_swaps=-1):
         assert method in ["search", "sampling"]
+        assert type(max_swaps) == int
         k = len(self.Energy.indices)
         n = self.Energy.n
         
         if method == "search" and self.Energy.type == "lowrank":
             self.Energy.prep_search_swap() # precompute all updatings for low-rank energy
             s, w = 0, 0
+            if self.infoRecorder:
+                tic = perf_counter()
             while w < n:
-                if self.report_timing:
-                    tic = perf_counter()
                 if s in self.Energy.indices:
                     s = (s + 1) % n 
                     w += 1
@@ -103,9 +123,11 @@ class AdaptiveSampler(object):
                     # change the Cholesky factor accordingly
                     LowRankEnergy.cholesky_add(self.Energy.L[:k,:k], self.Energy.G[self.Energy.indices[:k], s], t)
                     LowRankEnergy.cholesky_delete(self.Energy.L, k)
-                    if self.report_timing:
+                    if self.infoRecorder:
                         toc = perf_counter()
-                        self.swap_times.append((toc-tic, w))  # record time and number of iterations until swap
+                        self.infoRecorder(toc-tic, self.Energy.energy, w) # record info 
+                        tic = perf_counter()
+
                     w = 0
 
                     if debug:
@@ -127,10 +149,10 @@ class AdaptiveSampler(object):
 
         elif method == "search": # adaptive-search swap
             i, w = 0, 0
+            num_swaps = 0
+            if self.infoRecorder:
+                tic = perf_counter()
             while w < n:
-                if self.report_timing:
-                    tic = perf_counter()
-
                 # skip x_i if is already in the prototype set
                 if i in self.Energy.indices:
                     continue
@@ -143,9 +165,6 @@ class AdaptiveSampler(object):
                 j_poss = np.where(r == np.min(r))[0]
                 jstar = j_poss[self.random_state.choice(len(j_poss))]
 
-                if self.report_timing:
-                    toc = perf_counter()
-                    self.swap_times.append((toc-tic, None)) # record time and number of iterations until swap (None for search)
                 
                 # if minimum swap value improves the current energy, then perform the swap and update counter
                 if r[jstar] < self.Energy.energy:
@@ -155,7 +174,21 @@ class AdaptiveSampler(object):
                         if not np.isclose(self.Energy.energy, r[jstar]):
                             print("Warning: Adaptive Search Swap")
                             print("/t", jstar, old_idx, i, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
-                        w = 0
+                        if self.infoRecorder:
+                            toc = perf_counter()
+                            self.infoRecorder(toc-tic, self.Energy.energy, w) # record info 
+                            tic = perf_counter()
+
+                        # in the case that a max number of swaps is specified, check here if need to terminate
+                        #     (really only used with ConicEnergy because is costly)
+                        num_swaps += 1
+                        if num_swaps == max_swaps:
+                            print(f"-----Not necessarily converged, but reached specified maximum number of swaps ({max_swaps})-----")
+                            print("\tTerminating...")
+                            break
+
+                        w = 0 # reset the stagnation counter
+                        
                     else:
                         w += 1
                 else:
@@ -165,17 +198,16 @@ class AdaptiveSampler(object):
                 i += 1 
                 i = i % n
 
-        elif method == "sampling":   # adaptive sampling swap
+        elif method == "sampling":   # adaptive sampling swap with swap forcing (Currently Alg 3.4)
             # initialize counters, force swap prob vector, and best prototype trackers
             t, w, u = 0, 0, 0
             p = np.zeros(k)
             best_energy, best_inds = self.Energy.energy, self.Energy.indices[:]  # will track the best found energy and indices through adaptive swap moves
-            self.best_energy_vals = self.Energy.energy_values[:]  # track best energy values
             
-            if self.report_timing:
+            if self.infoRecorder:
                 tic = perf_counter()
             
-            # Complete at most 2*k swaps
+            # Complete at most 2*k successful swaps
             while u <= 2*k:
                 if self.Energy.type == "lowrank":
                     U = self.Energy.prep_all_downdates(returnU=True) # precompute all downdatings for low-rank energy. 
@@ -224,10 +256,6 @@ class AdaptiveSampler(object):
                     
                 # Step 4: perform the swap if swap was found
                 if s_prime != self.Energy.indices[t]:
-                    if self.report_timing: # if timing, record time before it 
-                        toc = perf_counter()
-                        self.swap_times.append((toc-tic, w))  # record time and number of iterations until swap
-
                     self.Energy.swap(t, s_prime)
                     u += 1                   # increment swap counter
                     w = 0                       # reset stagnation counter
@@ -236,26 +264,22 @@ class AdaptiveSampler(object):
                         best_energy = self.Energy.energy
                         best_inds = self.Energy.indices[:]
 
-                   # record the best energy value at this swap (for plots in paper)
-                    self.best_energy_vals.append(best_energy)
-                    
-                    if self.report_timing:
+                    if self.infoRecorder:
+                        toc = perf_counter()
+                        self.infoRecorder(toc-tic, self.Energy.energy, w) # record info 
                         tic = perf_counter()
-
 
                 t = (t + 1) % k    # increment index counter
 
 
             # At the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
-            all_energy_values = self.Energy.energy_values[:]  # make copy of old energy values (have all the swaps recorded)
             if debug:
                 print("Best energy found during sampling swap:", best_energy)
                 print("Energy at end of sampling swap:", self.Energy.energy)
                 print("Re-initializing Energy object to best found indices...")
             self.Energy.__init__(self.Energy.X, p=self.Energy.p)  # re-initialize Energy object
             self.Energy.init_set(best_inds)
-            self.Energy.energy_values = all_energy_values + [self.Energy.energy_values[-1]]  # overwrite the energy_values list to have full history for later plotting
             
             if not np.isclose(self.Energy.energy, best_energy): # check that we have properly reset the Energy object
                 print("Warning...: ", best_energy, self.Energy.energy, "re-initialized energy is not the same?")
