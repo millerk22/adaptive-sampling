@@ -46,11 +46,15 @@ class EnergyClass(object):
     def swap(self, t, i):
         return
 
-    def init_set(self, inds):
+    def init_set(self, inds, return_values=False):
         assert self.k is None 
         self.set_k(len(inds))
+        vals = [self.energy]
         for i in inds:
             self.add(i)
+            vals.append(self.energy)
+        if return_values:
+            return vals
         return
 
     def search_distances(self, candidates, idx_to_swap=None):
@@ -130,7 +134,7 @@ class ClusteringEnergy(EnergyClass):
     
 
     def swap(self, t, i):
-        # case of self.q2 is None is currently handled
+        # case of self.q2 is None is currently not handled
         assert (t < len(self.indices))  and (t >= 0)
         Vor_mask = self.h == t # in the Voronoi cell of the point being swapped out
         mask1 = self.D[:,i] < self.dists 
@@ -545,7 +549,7 @@ class ConicHullEnergy(EnergyClass):
 
     def set_k(self, k):
         super().set_k(k)
-        self.W = np.zeros((self.k, self.d))
+        self.W = np.zeros((self.k, self.X.shape[0]))
         self.H = np.zeros((self.k, self.n))
         self.G_S = np.zeros((self.k, self.n)) 
         return 

@@ -11,40 +11,37 @@ from sklearn.metrics import pairwise_distances
 from scipy.optimize import minimize
 
 
-ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"]#, "sampling_search"]  # 
-OVERSAMPLE_METHODS = ["sampling", "uniform"] 
-
-
-def find_methods_to_do(args, p, overwrite=[]):
+def find_methods_to_do(args, p):
+    savename = None
     if args.save:
+        # if results directory doesn't exist, create it
         if not os.path.exists(args.resultsdir):
             os.makedirs(args.resultsdir)
+        
+        # string for p value in the of p = \infty (None)
         if p is None:
             pstring = 'inf'
         else:
             pstring = str(p)
+        
+        # define the save name for the results, name includes some experiment parameters for identifying
         savename = os.path.join(args.resultsdir, args.dataset + "_" + args.energy + "_k" + str(args.k) + "_p" + str(pstring) + "_ns" + str(args.numseeds) + args.postfix + ".pkl")
         results = None 
         if os.path.exists(savename):
             with open(savename, "rb") as f:
                 results = pickle.load(f)
+    
 
-    if args.config.split("_")[-1].split(".")[0] == "other":
-        print(args.config)
-        print("Changing METHODS to only ['sampling', 'sampling_sampling']")
-        METHODS = ["sampling", "sampling_sampling"]
-    else:
-        METHODS = ALL_METHODS
-
+    # find what methods we have not run yet and need to do
     if results is None:
-        results = {s : defaultdict(list) for s in METHODS}
-        methods_to_do = METHODS 
+        results = {s : defaultdict(list) for s in args.methods}
+        methods_to_do = args.methods 
         already_done = []
     else:
         methods_to_do = []
         already_done = []
-        for method_str in METHODS:
-            if method_str in overwrite:
+        for method_str in args.methods:
+            if method_str in args.overwrite:
                 methods_to_do.append(method_str)
                 continue 
             if method_str in results:
@@ -52,8 +49,6 @@ def find_methods_to_do(args, p, overwrite=[]):
                     already_done.append(method_str)
                 elif (method_str.split("_")[0] == "search") and (len(results[method_str]['seeds']) == 1):
                     already_done.append(method_str)
-                # elif (method_str == "sampling_search") and (len(results[method_str]['seeds']) == 1):
-                #     already_done.append(method_str)
                 else:
                     methods_to_do.append(method_str)
             else:
@@ -69,12 +64,40 @@ def find_methods_to_do(args, p, overwrite=[]):
     return already_done, methods_to_do, savename, results
 
 
+
+
+def run_experiments_with_p(args, X, p, labels=None):
+
+    already_done, methods_to_do, savename, results = find_methods_to_do(args, p)    
+    
+    print("Already found results for: ", ", ".join(already_done))
+    print("(Re-)Computing results for: ", ", ".join(methods_to_do))
+    print("\tOversample methods: ", ", ".join(args.oversample))
+    print("\tOverwrite methods: ", ", ".join(args.overwrite))
+
+    
+    for count, method_str in enumerate(methods_to_do):
+        if len(results[method_str]['build_values']) == args.numseeds:
+            print(f"Already found {method_str} result in {savename}, skipping...")
+            continue
+
+        print(f"Overall Method = {method_str}, {count+1}/{len(methods_to_do)}")
+        
+        results = run_experiment(X, p, method_str, results, args, labels=labels)
+
+        if args.save:
+            print(f"Saving (intermediate) results to file {savename}...")
+            with open(savename, 'wb') as rfile:
+                pickle.dump(results, rfile)
+    return 
+
+
 """
-Need to have the experiments run build phase and swap phase separately, since for swap methods we will be 
+Note: Need to have the experiments run build phase and swap phase separately, since for swap methods we will be 
     figuring out the swaps for each 1<= i <= k, not just always doing the k build and then swaps.
 """
 
-def run_experiment(X, p, labels, method_str, results, seeds, args):
+def run_experiment(X, p, method_str, results, args, labels=None):
     if len(method_str.split("_")) == 2:
         build_method, swap_method = method_str.split("_")
     else:
@@ -82,19 +105,18 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
         swap_method = None
     
     # if this build method is designated to be oversampled, set the value of k accordingly
-    if build_method in OVERSAMPLE_METHODS: 
+    if build_method in args.oversample: 
         k_todo = args.k_oversample 
     else:
         k_todo = args.k
 
-    for i, seed in tqdm(enumerate(seeds), total=len(seeds)):
+    for i, seed in tqdm(enumerate(args.seeds), total=len(args.seeds)):
         # since search is deterministic, only need to run one test
         if i > 0:
             if method_str.split("_")[-1] == "search":  # this does include sampling_search, but for computational considerations we'll just do on the first seed.
                 continue 
-        
-        results[method_str]["seeds"].append(seed)
 
+        # a build only method
         if swap_method is None:
             # Instantiate an Energy object for this test
             if args.energy == "conic":
@@ -103,40 +125,31 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                 Energy = ClusteringEnergy(X, p=p)
             elif args.energy == "cluster-nongram":
                 Energy = ClusteringEnergyNonGram(X, p=p)
+            elif args.energy == "lowrank":
+                Energy = LowRankEnergy(X, p=p)
             else:
                 print(f"Energy type = {args.energy} not recognized, skipping")
                 break
             
             # Perform the build function for this run
-            if build_method == "uniform":
-                # uniform can be done all at once
-                random_state = np.random.RandomState(seed)
-                Energy.init_set(list(random_state.choice(Energy.n, k_todo, replace=False)))
-                if args.time:
-                    results[method_str]["times"].append(k_todo*[None])
-            else:
-                sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-                sampler.build_phase(k_todo, method=build_method)
-                if args.time:
-                    results[method_str]["times"].append(sampler.build_times)
-
+            sampler = AdaptiveSampler(Energy, seed=seed, record=True)
+            sampler.build_phase(k_todo, method=build_method)
+            results[method_str]["build_times"].append(sampler.build_times)
+            results[method_str]["build_values"].append(sampler.build_values)
             results[method_str]["indices"].append(Energy.indices)
-            results[method_str]["energy"].append(Energy.energy)
-            results[method_str]["energy_values"].append(Energy.energy_values)
             
         else:
             # if we have a swap_method string, then we will read in previously done build moves to 
             # avoid recomputing...
-            all_build_inds = results[build_method]["indices"][i] # get the previously computed indices from the non-swap moves method
+            indices_build = results[build_method]["indices"][i] # get the previously computed indices from the non-swap moves method
                                                                 # should have because of check done in main part of script
 
-            indices_swap = []
-            energy_swap = []
-            energy_values_swap = []
-            times_swap = []
-            num_actual_swaps = []
-            num_forced_swaps, swap_force_probs, forced_iters = [], [], []
-
+            final_swap_values = []
+            final_swap_indices = {}
+            all_swap_values = {}
+            all_swap_times = {}
+            all_swap_stag = {}
+            
             for k_ in tqdm(range(1, args.k+1), total=args.k, desc=f"Performing swaps for each of 1 to {args.k} points..."):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
@@ -145,47 +158,41 @@ def run_experiment(X, p, labels, method_str, results, seeds, args):
                     Energy = ClusteringEnergy(X, p=p)
                 elif args.energy == "cluster-nongram":
                     Energy = ClusteringEnergyNonGram(X, p=p)
+                elif args.energy == "lowrank":
+                    Energy = LowRankEnergy(X, p=p)
                 else:
                     print(f"Energy type = {args.energy} not recognized, skipping")
                     break
 
                 # initialize with k_ points, will do swaps from here
-                Energy.init_set(all_build_inds[:k_])
+                Energy.init_set(indices_build[:k_])
 
                 # instantiate adaptive sampler
-                sampler = AdaptiveSampler(Energy, seed=seed, report_timing=args.time)
-
-                if k_ > 1:
-                    _ = sampler.swap_phase(method=swap_method, debug=True)
-                    if args.time:
-                        times_swap.append(sampler.swap_times)
-                    
-                    
-
-                indices_swap.append(sampler.Energy.indices)
-                energy_swap.append(sampler.Energy.energy)
-                if hasattr(sampler, "best_energy_vals"):
-                    energy_values_swap.append(sampler.best_energy_vals)
+                sampler = AdaptiveSampler(Energy, seed=seed, record=True)
+                if k_ == 1 and swap_method == "search":
+                    # don't do a swap since search build is already "optimal subset of size 1" 
+                    print(f"Skipping swap phase with k_ = {k_} for {swap_method}...")
+                    # in this case the sampler values will just be empty lists below
+                elif k_ == 1 and args.energy == "cluster":
+                    print(f"Skipping k_ = 1 for cluster energy")
                 else:
-                    energy_values_swap.append(sampler.Energy.energy_values)
+                    sampler.swap_phase(method=swap_method, debug=False)
+                final_swap_values.append(Energy.energy)
+                final_swap_indices[k_] = Energy.indices
+                all_swap_values[k_] = sampler.swap_values 
+                all_swap_times[k_] = sampler.swap_times 
+                all_swap_stag[k_] = sampler.swap_stag
                 
-                if hasattr(sampler, "num_forced_swaps"):
-                    num_forced_swaps.append(sampler.num_forced_swaps)
-                    swap_force_probs.append(sampler.swap_force_probs)
-                    forced_iters.append(sampler.forced_iters)
 
+            # record all the relevant info from each of the swap runs
+            results[method_str]["swap_values"].append(final_swap_values)
+            results[method_str]["indices"].append(final_swap_indices)
+            results[method_str]["all_swap_values"].append(all_swap_values)
+            results[method_str]["all_swap_times"].append(all_swap_times)
+            results[method_str]["all_swap_stag"].append(all_swap_stag)
 
-            results[method_str]["indices"].append(indices_swap)
-            results[method_str]["energy"].append(energy_swap)
-            results[method_str]["energy_values"].append(energy_values_swap)
-            if len(num_forced_swaps) > 0:
-                results[method_str]["num_forced_swaps"].append(num_forced_swaps)
-                results[method_str]["swap_force_probs"].append(swap_force_probs)
-                results[method_str]["forced_iters"].append(forced_iters)
-                results[method_str]["num_actual_swaps"].append(sampler.num_actual_swaps)
-            if args.time:
-                # add the time from as_method to select each of the k points via adaptive sampling and then the time to do all the swap moves thereafter
-                results[method_str]["times"].append(times_swap)
+        # if completed this seed's experiment, append the seed value
+        results[method_str]["seeds"].append(seed)
 
     return results 
 

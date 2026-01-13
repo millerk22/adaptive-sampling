@@ -10,53 +10,13 @@ from datasets import *
 from util import *
 
 
-def run_experiments_p(args, X, p, labels=None, seeds=np.arange(42,48), overwrite=[]):
-
-    already_done, methods_to_do, savename, results = find_methods_to_do(args, p, overwrite)    
-    
-    print("Already found results for: ", ", ".join(already_done))
-    print("(Re-)Computing results for: ", ", ".join(methods_to_do))
-    print("\tOversample methods: ", ", ".join(OVERSAMPLE_METHODS))
-    print("\tOverwrite methods: ", ", ".join(overwrite))
-
-    
-    for count, method_str in enumerate(methods_to_do):
-        if len(results[method_str]['energy']) == args.numseeds:
-            print(f"Already found {method_str} result in {savename}, skipping...")
-            continue
-
-        print(f"Overall Method = {method_str}, {count+1}/{len(methods_to_do)}")
-        
-        results = run_experiment(X, p, labels, method_str, results, seeds, args)
-
-        if args.save:
-            print(f"Saving (intermediate) results to file {savename}...")
-            with open(savename, 'wb') as rfile:
-                pickle.dump(results, rfile)
-    return 
+ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"]#, "sampling_search"] 
+OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 
-
-
-
-if __name__ == "__main__":
-    parser = ArgumentParser(description="Main file for running adaptive search/sampling tests.")
-    parser.add_argument("--dataset", default="test", help="Name of dataset, referenced in get_dataset function")
-    parser.add_argument("--k", default=10, type=int, help="Number of samples to select")
-    parser.add_argument("--k_oversample", default=50, type=int, help="Number of samples to select via oversampling")
-    parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
-    parser.add_argument("--save", default=1, type=int, help="Boolean (i.e., integer 1 or 0) of whether or not to save the results to file.")
-    parser.add_argument("--energy", default="conic", help="String name of the evaluation energy type; one of ['conic', 'cluster']")
-    parser.add_argument("--numseeds", default=1, type=int, help="Number of random trials (indexed by seeds) to perform")
-    parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
-    parser.add_argument("--time", default=1, type=int, help="Bool flag (0 or 1) of whether or not to record times for each iteration of methods.")
-    parser.add_argument("--njobs", default=12, type=int, help="Number of CPU cores to utilize in parallelization.")
-    parser.add_argument("--config", default="", type=str, help="Location of .yml configuration file containing 'methods' list.")
-    parser.add_argument("--ntest", default=500, type=int, help="Size of 'test' dataset for timing comparisons.")
-    args = parser.parse_args()
-
-    
+def prep_args(args):
     overwrite_methods = []
+    methods = []
     args.powers = [1, 2, 5, None]
 
     if args.dataset == "test":
@@ -72,7 +32,23 @@ if __name__ == "__main__":
             overwrite_methods = sorted(config['overwrite'])
         else:
             overwrite_methods = []
-        assert np.isin(overwrite_methods, ALL_METHODS).all()
+        assert np.isin(overwrite_methods, ALL_METHODS).all()  # see ALL_METHODS in util.py
+        args.overwrite = overwrite_methods
+
+        if 'methods' in config:
+            methods = sorted(config['methods'])
+            assert np.isin(methods, ALL_METHODS).all()
+        else:
+            methods = ALL_METHODS 
+        args.methods = methods
+
+        if 'oversample' in config:
+            oversample = sorted(config['oversample'])
+            assert np.isin(oversample, ALL_METHODS).all()
+        else:
+            oversample = OVERSAMPLE_METHODS
+        args.oversample = oversample
+        
 
         if 'k' in config:
             args.k = config['k']
@@ -82,14 +58,34 @@ if __name__ == "__main__":
             args.dataset = config['dataset']
         if 'energy' in config:
             args.energy = config['energy']
-        if 'time' in config:
-            args.time = int(config['time'])
         if 'numseeds' in config:
             args.numseeds = config['numseeds']
         if 'powers' in config:
             args.powers = config['powers']
 
+    args.seeds = np.arange(42, 42+args.numseeds) # define the random seeds
+
     assert args.energy in IMPLEMENTED_ENERGIES
+    return args
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser(description="Main file for running adaptive search/sampling tests.")
+    parser.add_argument("--dataset", default="test", help="Name of dataset, referenced in get_dataset function")
+    parser.add_argument("--k", default=10, type=int, help="Number of samples to select")
+    parser.add_argument("--k_oversample", default=50, type=int, help="Number of samples to select via oversampling")
+    parser.add_argument("--resultsdir", default="./results", help="Location to save results, if args.save = 1")
+    parser.add_argument("--save", default=1, type=int, help="Boolean (i.e., integer 1 or 0) of whether or not to save the results to file.")
+    parser.add_argument("--energy", default="conic", help="String name of the evaluation energy type; one of ['conic', 'cluster']")
+    parser.add_argument("--numseeds", default=1, type=int, help="Number of random trials (indexed by seeds) to perform")
+    parser.add_argument("--postfix", default="", type=str, help="Postfix identifier string to be differentiate this run from others")
+    parser.add_argument("--record", default=1, type=int, help="Bool flag (0 or 1) of whether or not to record times and other info for each iteration of methods.")
+    parser.add_argument("--njobs", default=12, type=int, help="Number of CPU cores to utilize in parallelization.")
+    parser.add_argument("--config", default="", type=str, help="Location of .yml configuration file containing 'methods' list.")
+    parser.add_argument("--ntest", default=500, type=int, help="Size of 'test' dataset for timing comparisons.")
+    args = parser.parse_args()
+
+    args = prep_args(args)
 
     # load dataset and run test for the corresponding experiment name
     X, labels = load_dataset(args.dataset, n_test=args.ntest)
@@ -109,4 +105,4 @@ if __name__ == "__main__":
         if p == "None":
             p = None
 
-        run_experiments_p(args, X, p, labels=labels, seeds=np.arange(42,42+args.numseeds), overwrite=overwrite_methods)
+        run_experiments_with_p(args, X, p, labels=labels)
