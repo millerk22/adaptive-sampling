@@ -28,6 +28,7 @@ class EnergyClass(object):
     def set_k(self, k):
         assert type(k) == int 
         assert k > 0
+        assert len(self.indices) == 0
         self.k = k
         return 
 
@@ -264,6 +265,7 @@ class LowRankEnergy(EnergyClass):
         
     def set_k(self, k):
         super().set_k(k)
+        assert(self.W is None and self.L is None and self.f is None), "Cannot call set_k after objects have been allocated."
         # W and L follow X's dtype; f is always real
         self.W = np.zeros((self.k, self.n), dtype=self.X.dtype)
         self.L = np.zeros((self.k, self.k), dtype=self.X.dtype)
@@ -321,8 +323,6 @@ class LowRankEnergy(EnergyClass):
             # update d
             self.d -= np.abs(r)**2 / v
         
-        
-        
         # Update R if we're in a search build
         if hasattr(self, 'R'):
             w_k = self.W[k_curr, :]
@@ -344,6 +344,9 @@ class LowRankEnergy(EnergyClass):
     def search_distances(self, candidates):  # adaptive search build
         if len(self.indices) == 0:
             self.R = self.G.copy()
+        elif not hasattr(self, 'R'):
+            submatrix = self.G[np.ix_(self.indices[:-1],self.indices[:-1])]
+            self.R = self.G - self.W[:len(self.indices)-1,:].conj().T @ submatrix @ self.W[:len(self.indices)-1,:]
 
         Q = np.outer(np.ones(len(candidates)), self.d)
 
