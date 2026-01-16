@@ -33,7 +33,7 @@ class AdaptiveSampler(object):
         if method == "uniform":
             # have uniform sampling implemented here as well for ease in the run_experiment function in util.py
             indices = list(self.random_state.choice(self.Energy.n, k, replace=False))
-            build_values = self.Energy.init_set(indices, return_values=True)
+            build_values = self.Energy.init_set(indices, return_values=True)[1:]
             self.build_values = build_values
             self.build_times = k*[None]
         else:
@@ -73,9 +73,9 @@ class AdaptiveSampler(object):
         assert type(max_swaps) == int
         k = len(self.Energy.indices)
         n = self.Energy.n
+        self.Energy.prep_for_swaps(method)
         
         if method == "search" and self.Energy.type == "lowrank":
-            self.Energy.prep_search_swap() # precompute all updatings for low-rank energy
             s, w = 0, 0
             if self.record:
                 tic = perf_counter()
@@ -151,9 +151,7 @@ class AdaptiveSampler(object):
 
             if self.record:
                 toc = perf_counter()
-                self.record_swap(toc-tic, self.Energy.energy, w)
-            # clean up any temporary variables used in low-rank search swap
-            self.Energy.end_search_swap() 
+                self.record_swap(toc-tic, self.Energy.energy, w) 
 
         elif method == "search": # adaptive-search swap
             i, w = 0, 0
@@ -216,7 +214,7 @@ class AdaptiveSampler(object):
                 toc = perf_counter()
                 self.record_swap(toc-tic, self.Energy.energy, w)
 
-        elif method == "sampling":   # adaptive sampling swap with swap forcing (Currently Alg 3.4)
+        elif method == "sampling":   # adaptive sampling swap with swap forcing (Currently Alg 3.4)    
             # initialize counters, force swap prob vector, and best prototype trackers
             t, w, u = 0, 0, 0
             p = np.zeros(k)
@@ -249,18 +247,29 @@ class AdaptiveSampler(object):
                     assert np.isclose(force_swap_probs.sum(), 1.0) # check valid probability distribution
                     s_prime = self.random_state.choice(range(self.Energy.n), p=force_swap_probs) # sample the forced swap prototype
 
-                else:
-                    # Step 1 : update cost vector and sample a proposal prototype 
+                else: # Algorithm 3.5
+                    # Step 1: Compute probability of trivial swap
                     q_probs_wo_st = self.Energy.compute_swap_distances(idx_to_swap=t)  # includes the power p from the Energy object computation
                     q_probs_den = q_probs_wo_st.sum()
-                    s_prime = self.random_state.choice(range(self.Energy.n), p=q_probs_wo_st/q_probs_den)
-                    p[w] = q_probs_wo_st[self.Energy.indices[t]] /q_probs_den # probability of not swapping at this current iteration
-                    w += 1
-                    # Step 2: if stagnated, then terminate (p = \inf case)
+                    p[w] = q_probs_wo_st[self.Energy.indices[t]] /q_probs_den # trivial swap prob
+                    
+
+                    # Step 2: Does a swap happen?
+                    if self.random_state.rand() > p[w]:
+                        q_probs_den -= q_probs_wo_st[self.Energy.indices[t]] # subtract off the trivial swap component
+                        q_probs_wo_st[self.Energy.indices[t]] = 0.0          # ignore s_t
+                        non_trivial_swap_probs = q_probs_wo_st / q_probs_den
+                        assert np.isclose(non_trivial_swap_probs.sum(), 1.0) # check valid probability distribution
+                        s_prime = self.random_state.choice(range(self.Energy.n), p=non_trivial_swap_probs)
+                    else:
+                        s_prime = self.Energy.indices[t]
+                        w += 1
+                    
+                    # Step 3: If stagnated, then terminate (p = \inf case)
                     if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is None):
                         break
 
-                    # Step 3: If stagnated, then force a swap (p < \inf case)
+                    # Step 4: If stagnated, then force a swap (p < \inf case)
                     if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is not None):
                         probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))  # probabilities for selecting which prototype to force a swap
                         j = self.random_state.choice(range(k), p=probs)   
@@ -277,7 +286,7 @@ class AdaptiveSampler(object):
                     self.Energy.swap(t, s_prime)
                     u += 1                   # increment swap counter
                     w = 0                       # reset stagnation counter
-                    # check if this is best energy found so far
+                    # track best energy found so far
                     if self.Energy.energy < best_energy:
                         best_energy = self.Energy.energy
                         best_inds = self.Energy.indices[:]
@@ -290,9 +299,6 @@ class AdaptiveSampler(object):
 
                 t = (t + 1) % k    # increment index counter
 
-            if self.record and w > 0:
-                toc = perf_counter()
-                self.record_swap(toc-tic, self.Energy.energy, w)
             # At the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
             if debug:
@@ -302,6 +308,7 @@ class AdaptiveSampler(object):
             self.Energy.__init__(self.Energy.X, p=self.Energy.p)  # re-initialize Energy object
             self.Energy.init_set(best_inds)
             
+            
             if not np.isclose(self.Energy.energy, best_energy): # check that we have properly reset the Energy object
                 print("Warning...: ", best_energy, self.Energy.energy, "re-initialized energy is not the same?")
             
@@ -309,7 +316,8 @@ class AdaptiveSampler(object):
         else:
             raise NotImplementedError(f"Method {method} not recognized for swap phase.")
         
-        
+        # clean up any temporary variables used in respective Energy objects
+        self.Energy.end_swaps()
 
         return 
 
