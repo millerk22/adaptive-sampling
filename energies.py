@@ -105,8 +105,7 @@ class ClusteringEnergy(EnergyClass):
         self.D = self.compute_distances()   
         self.near = None 
         self.next_near = None 
-        self.next_dists = None 
-        self.V = None
+        self.next_dists = None
         self.type = "cluster"
     
     def set_k(self, k):
@@ -130,44 +129,74 @@ class ClusteringEnergy(EnergyClass):
     
 
     def swap(self, t, i):
-        assert self.V is not None #ensure we are prepped to swap
+        '''
+        For each x_j in dataset, let: d_i = d(x_j, x_i), d_near = d(x_j, Y), d_next_near = d(x_j, Y \ {nearest proto to x_j})
+        
+        Regions:  d_i \in I, II, or III 
+        |     I         |       II          |          III
+        |------------d_near-------------d_next_near--------------
+        
+        Cases:[A] x_j in V_t  --> d_near is removed
+              [B] x_j in V_t2 --> d_next_near is removed 
+              [C] o.w.        --> neither is removed
+
+        Results:  
+            |             I              |            II                |              III               |
+            ---------------------------------------------------------------------------------------------
+         A  |                   replace d_near = d_i                    |  recompute near,next_near
+            |---------------------------------------------------------------------------------------------
+         B  | d_next_near = d_near,      |    d_next_near = d_i         |    recompute next_near         |
+            |    d_near = d_i            |                              |                                |
+            |---------------------------------------------------------------------------------------------
+         C  | d_next_near = d_near,      |     d_next_near = d_i        |            NOTHING             |
+            |   d_near = d_i             |                              |                                |
+            ----------------------------------------------------------------------------------------------
+        '''
         # case of self.q2 is None is currently not handled
-        assert (t < len(self.indices))  and (t >= 0)    
-        in_V_t = self.near == t # in the Voronoi cell of the point being swapped out
-        i_is_nearest = self.D[:,i] < self.dists 
-        i_is_at_least_next_nearest = self.D[:,i] < self.next_dists 
-        notVor1 = ~in_V_t & i_is_nearest # outside t's Voronoi cell and d(x_i, x_j) < dists_old(j)
-        notVor2 = ~in_V_t & ~i_is_nearest & i_is_at_least_next_nearest # outside t's Voronoi cell and dists_old(j) <= d(i,jj) < next_dists_old(j)
-        Vor1 = in_V_t & i_is_at_least_next_nearest # inside t's Voronoi cell and d(i,j) < next_dists_old(j)
-        Vor2 = in_V_t & ~i_is_at_least_next_nearest # inside t's Voronoi cell and  d(i,j) >= next_dists_old(j)
+        if len(self.indices) == 0:
+            raise ValueError("Cannot swap with no prototypes chosen.")
+        assert (t < len(self.indices))  and (t >= 0)  
 
+        if len(self.indices) == 1:
+            # simple case, just switch dists with new i dists (self.near is already all zeros, nothing to change)
+            self.dists = self.D[:,i].copy()
+            return 
         
-        # Something wrong with Vor2 computations...
-        self.Vor1 = Vor1.copy()
-        self.Vor2 = Vor2.copy()
-        self.notVor1 = notVor1.copy()
-        self.notVor2 = notVor2.copy()
+        assert self.next_near is not None # ensure we are prepped to swap
+        
+        d_i = self.D[:,i].copy()  
 
-        #### outside t's Voronoi cell updates
-        self.q2[notVor2] = self.D[notVor2, i]  # Case II: only update q2 where q_S(j) <= d_i(j) < q2(j)
-        self.q2[notVor1] = self.dists[notVor1] # Case I: update dists, q2, h where d_i(j) < q_S(j)
-        self.dists[notVor1] = self.D[notVor1, i]
-        self.h[notVor1] = t 
+        # Iteratively refine the partition of indices based on the cases/regions above
+        all_idxs = np.arange(self.n)
 
+        regIII = np.where(self.next_dists < d_i)[0]
+        regI_II = np.setdiff1d(all_idxs, regIII)
+        regI_II_caseA = regI_II[self.near[regI_II] == t]
+        regI_II_caseB_C = np.setdiff1d(regI_II, regI_II_caseA) 
+        regI_caseB_C = regI_II_caseB_C[d_i[regI_II_caseB_C] < self.dists[regI_II_caseB_C]]
+        regII_caseB_C = np.setdiff1d(regI_II_caseB_C, regI_caseB_C)
+        regIII_caseA_B = regIII[(self.near[regIII] != t) & (self.next_near[regIII] != t)]
+
+        # Region I and II, Case A: just update nearest dists with d_i. (near remains t)
+        self.dists[regI_II_caseA] = d_i[regI_II_caseA]
+
+        # Region I, Cases B and C: update dists, next_dists, near, and next_near
+        self.next_dists[regI_caseB_C] = self.dists[regI_caseB_C]
+        self.next_near[regI_caseB_C] = self.near[regI_caseB_C]
+        self.dists[regI_caseB_C] = d_i[regI_caseB_C]
+        self.near[regI_caseB_C] = t
+
+        # Region II, Cases B and C: update next_dists, but don't need to update next_near (remains t)
+        self.next_dists[regII_caseB_C] = d_i[regII_caseB_C]
         
-        self.indices[t] = i
-        
-        #### inside t's Voronoi cell updates
-        self.dists[Vor1] = self.D[Vor1,i] # Case I: update only dists where d_i(j) < q_S(j). h and q2 stay unchanged
-        # Case II: need to "fully" update dists, q2, and h
-        numV2 = Vor2.sum() 
-        Dv2 = self.D[np.ix_(Vor2,self.indices)]  # self.indices now contains the inserted point, x_i
-        h1h2 = np.argsort(Dv2,axis=1)[:,:2]  # indices of the two smallest distances in each row of Dv2
-        self.h[Vor2] = h1h2[:,0]
-        self.dists[Vor2] = Dv2[np.arange(numV2),h1h2[:,0]].flatten()
-        self.q2[Vor2] = Dv2[np.arange(numV2),h1h2[:,1]].flatten()
+        # Region III, Cases A and B: update everything from scratch
+        self.indices[t] = i   # need to replace tth prototype with x_i
+        if regIII_caseA_B.size > 0:
+            self.near[regIII_caseA_B], self.dists[regIII_caseA_B], self.next_near[regIII_caseA_B], self.next_dists[regIII_caseA_B] = \
+                        ClusteringEnergy.first_second_smallest_per_row(self.D[np.ix_(regIII_caseA_B, self.indices)])
         
         self.compute_energy()
+        return 
         
     
     def compute_distances(self, inds=None):
@@ -213,28 +242,19 @@ class ClusteringEnergy(EnergyClass):
             r = np.linalg.norm(r, axis=1, ord=self.p)
         
         return r 
-    
-    def prep_all_downdates(self, returnU=True):
-        U = np.tile(self.dists, (self.k, 1))
-        U[self.h, np.arange(self.n)] = self.q2
-        if self.p is None:
-            self.U = U.max(axis=1)[:,np.newaxis]
-        else:
-            self.U = U**(self.p)
-        if returnU:
-            return self.U
-        return 
 
     def prep_for_swaps(self, method="sampling", debug=False):
-        if method == "sampling":
+        if self.k > 2:
             near1, d1, near2, d2 = ClusteringEnergy.first_second_smallest_per_row(self.D[:,self.indices])
             if debug:
                 assert np.allclose(d1, self.dists)
                 assert np.allclose(near1, self.near)
             self.next_near = near2                               # next-nearest prototype indices
             self.next_dists = d2                                 # next-nearest distances 
-            self.V = {k_ : np.where(self.near == k_)[0].tolist() for k_ in range(self.k)} # Voronoi cells
-            
+        elif self.k == 2:
+            self.next_near = 1 - self.near 
+            self.next_dists = np.take_along_axis(self.D, np.array(self.indices)[self.next_near, None], axis=1).flatten()
+
         return 
     
     @staticmethod

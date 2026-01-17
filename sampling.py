@@ -183,8 +183,9 @@ class AdaptiveSampler(object):
                         self.Energy.swap(jstar, i)
                         if not np.isclose(self.Energy.energy, r[jstar]):
                             print("Warning: Adaptive Search Swap")
-                            print("/t", jstar, old_idx, i, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
-                        
+                            print("\t", jstar, old_idx, i, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
+                            print("\t", r, r[jstar], self.Energy.energy)
+                            
                         # record the time, energy, and stagnation counter for the swap move
                         if self.record:
                             toc = perf_counter()
