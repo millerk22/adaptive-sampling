@@ -341,6 +341,8 @@ class LowRankEnergy(EnergyClass):
                 self.Y = self.W.conj() @ self.R # compute Y = W R upfront, updates will be easy thereafter 
 
             else:
+                if self.indices[-1] == -1:
+                    print("WARNING.... Looks like you're calling prep_for_swaps a second time, which can cause problems..")
                 # pad W, L, f with zeros to allow for temporary (k+1) prototypes during search swap computations
                 self.W = np.vstack((self.W, np.zeros((1, self.n), dtype=self.X.dtype)))
                 self.L = np.vstack((self.L, np.zeros((1, self.L.shape[1]), dtype=self.X.dtype)))
@@ -529,6 +531,8 @@ class LowRankEnergy(EnergyClass):
         U = np.clip(U, 0.0, None)
         if self.p is None:
             self.U = U.max(axis=1)[:,np.newaxis]
+        elif np.isclose(self.p, 2):
+            self.U = U
         else:
             self.U = U**(0.5*self.p)
 
@@ -599,7 +603,7 @@ class LowRankEnergy(EnergyClass):
             self.prep_all_downdates(returnU=False)
         return self.U[idx_to_swap,:]
 
-    def compute_eager_swap_values(self, idx):
+    def compute_eager_swap_values(self, idx): # adaptive search swap
         curr_energy = np.copy(self.energy)
         if np.isclose(self.p, 2) and not self.test: # p = 2 case, (Algorithm 9.8)
             W_rownorm2 = np.linalg.norm(self.W, axis=1)**2.
@@ -612,8 +616,8 @@ class LowRankEnergy(EnergyClass):
             vals = W_rownorm2/self.f - (rs + W_rownorm2*ws_abs2 / (self.f**2.) + 2.*(ys*ws.conj()).real/self.f) /(self.R[idx,idx] + ws_abs2 / self.f) 
             
             # correct for the different form of the values in the p = 2 case  
-            vals = np.sqrt(vals/self.n + curr_energy**2.)
-            print(vals, curr_energy)
+            vals = np.sqrt(vals + curr_energy**2.)
+            
 
         else: # p != 2, (Algorithm 9.7)
             self.update(t=self.k, i=idx)  # update prototype set at (k+1)th prototype spot with current s 
@@ -625,11 +629,11 @@ class LowRankEnergy(EnergyClass):
             else:
                 # prep_all_downdates() already includes the power p in the computation
                 vals = self.U.sum(axis=1)**(1./self.p)
-            
+
             # make sure the final entry of vals is the current energy
             assert np.isclose(vals[-1], curr_energy)  
             vals = vals[:-1] # since we've passed the above check, we can ignore the last entry, since we know it won't be chosen by .min() operation in sampler 
-        
+
         return vals  
 
 
