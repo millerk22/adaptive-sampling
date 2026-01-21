@@ -44,7 +44,7 @@ class EnergyClass(object):
         self.compute_energy()
         return
     
-    def swap(self, t, i):
+    def swap(self, t, i, debug=False):
         return
 
     def init_set(self, inds, return_values=False):
@@ -128,7 +128,7 @@ class ClusteringEnergy(EnergyClass):
         return 
     
 
-    def swap(self, t, i):
+    def swap(self, t, i, debug=False):
         '''
         For each x_j in dataset, let: d_i = d(x_j, x_i), d_near = d(x_j, Y), d_next_near = d(x_j, Y \ {nearest proto to x_j})
         
@@ -157,13 +157,18 @@ class ClusteringEnergy(EnergyClass):
             raise ValueError("Cannot swap with no prototypes chosen.")
         assert (t < len(self.indices))  and (t >= 0)  
 
+        if i in self.indices:
+            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
+            return 
+
         if len(self.indices) == 1:
             # simple case, just switch dists with new i dists (self.near is already all zeros, nothing to change)
             self.dists = self.D[:,i].copy()
             return 
         
-        assert self.next_near is not None # ensure we are prepped to swap
-        
+        if self.next_near is None: # ensure we are prepped to swap
+            self.prep_for_swaps()
+
         d_i = self.D[:,i].copy()  
 
         # Iteratively refine the partition of indices based on the cases/regions above
@@ -175,8 +180,8 @@ class ClusteringEnergy(EnergyClass):
         regI_II_caseB_C = np.setdiff1d(regI_II, regI_II_caseA) 
         regI_caseB_C = regI_II_caseB_C[d_i[regI_II_caseB_C] < self.dists[regI_II_caseB_C]]
         regII_caseB_C = np.setdiff1d(regI_II_caseB_C, regI_caseB_C)
-        regIII_caseA_B = regIII[(self.near[regIII] != t) & (self.next_near[regIII] != t)]
-
+        regIII_caseA_B = regIII[(self.near[regIII] == t) | (self.next_near[regIII] == t)]
+        
         # Region I and II, Case A: just update nearest dists with d_i. (near remains t)
         self.dists[regI_II_caseA] = d_i[regI_II_caseA]
 
@@ -231,7 +236,7 @@ class ClusteringEnergy(EnergyClass):
     
     def compute_eager_swap_values(self, idx):
         if idx in self.indices:
-            return np.ones(len(self.indices))*self.energy*(1.0000001)
+            return np.ones(len(self.indices))*self.energy*(1.1)
         Dtilde = self.D[:,self.indices+[idx]]
         r = np.vstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1).reshape(1,-1) for j in range(len(self.indices))])
         if len(r.shape) == 1:
@@ -316,6 +321,8 @@ class LowRankEnergy(EnergyClass):
         self.f = None   # diagonal of G[indices, indices]^{-1}
         self.type = "lowrank"
         self.U = None  # for adaptive sampling swap
+        self.verbose = False
+        self.test = False
         
     def set_k(self, k):
         super().set_k(k)
@@ -328,13 +335,20 @@ class LowRankEnergy(EnergyClass):
     
     def prep_for_swaps(self, method="sampling"):
         if method == "search":
-            # pad W, L, f with zeros to allow for temporary (k+1) prototypes during search swap computations
-            self.W = np.vstack((self.W, np.zeros((1, self.n), dtype=self.X.dtype)))
-            self.L = np.vstack((self.L, np.zeros((1, self.L.shape[1]), dtype=self.X.dtype)))
-            self.L = np.hstack((self.L, np.zeros((self.L.shape[0], 1), dtype=self.X.dtype)))
-            self.L[-1,-1] = 1.0
-            self.f = np.concatenate((self.f, np.array([0.0])))
-            self.indices = self.indices + [-1]  # placeholder for temporary (k+1) prototype
+            if np.isclose(self.p, 2) and not self.test:
+                if not hasattr(self, 'R'): # if did not have a search build previously, compute R here 
+                    self.R = self.G - self.W.conj().T @ (self.G[np.ix_(self.indices,self.indices)] @ self.W)
+                self.Y = self.W.conj() @ self.R # compute Y = W R upfront, updates will be easy thereafter 
+
+            else:
+                # pad W, L, f with zeros to allow for temporary (k+1) prototypes during search swap computations
+                self.W = np.vstack((self.W, np.zeros((1, self.n), dtype=self.X.dtype)))
+                self.L = np.vstack((self.L, np.zeros((1, self.L.shape[1]), dtype=self.X.dtype)))
+                self.L = np.hstack((self.L, np.zeros((self.L.shape[0], 1), dtype=self.X.dtype)))
+                self.L[-1,-1] = 1.0
+                self.f = np.concatenate((self.f, np.array([0.0])))
+                self.indices = self.indices + [-1]  # placeholder for temporary (k+1) prototype
+        
         return 
     
     def end_swaps(self):
@@ -401,9 +415,9 @@ class LowRankEnergy(EnergyClass):
         if len(self.indices) == 0:
             self.R = self.G.copy()
         elif not hasattr(self, 'R'):
-            submatrix = self.G[np.ix_(self.indices[:-1],self.indices[:-1])]
-            self.R = self.G - self.W[:len(self.indices)-1,:].conj().T @ submatrix @ self.W[:len(self.indices)-1,:]
-
+            submatrix = self.G[np.ix_(self.indices,self.indices)]
+            self.R = self.G - self.W[:len(self.indices),:].conj().T @ submatrix @ self.W[:len(self.indices),:]
+            
         Q = np.outer(np.ones(len(candidates)), self.d)
 
         # don't want to consider those points already in the span for numerical stability reasons
@@ -423,9 +437,11 @@ class LowRankEnergy(EnergyClass):
     def downdate(self, t): # (Algorithm 9.4)
         k_max = self.f.size
         assert t < k_max and t >= 0
+        wt = np.copy(self.W[t,:])
+        ft = np.copy(self.f[t])
 
         # downdate d first
-        self.d += np.abs(self.W[t, :])**2 / self.f[t]
+        self.d += np.abs(wt)**2 / ft
         
         # perform Cholesky Delete operation
         self.cholesky_delete(self.L, t)
@@ -434,7 +450,7 @@ class LowRankEnergy(EnergyClass):
         a = solve_triangular(self.L, self.G[self.indices, self.indices[t]], lower=True) 
         b = solve_triangular(self.L, a, lower=True, trans='C')
         b[t] = -1.0
-        self.W  += np.outer(b, self.W[t,:])
+        self.W  += np.outer(b, wt)
         a_t = np.concatenate((a[:t], a[t+1:]))
         self.f -= np.abs(b)**2 / (self.G[self.indices[t], self.indices[t]].real - np.vdot(a_t,a_t).real)
         
@@ -445,7 +461,12 @@ class LowRankEnergy(EnergyClass):
         # update these values
         self.dists = np.sqrt(self.d)  
         self.compute_energy()
-        
+
+
+        # if have attribute Y and R (p=2 search swap), downdate accordingly 
+        if hasattr(self, 'Y'):
+            self.R += np.outer(wt.conj(), wt)/ft 
+            self.Y += np.outer(b, self.Y[t,:]) + np.outer(self.W @ wt.conj(), wt) / ft
 
         return 
     
@@ -494,23 +515,81 @@ class LowRankEnergy(EnergyClass):
         self.dists = np.sqrt(self.d)   
         self.compute_energy()
         
+        # if have attribute Y and R (p=2 search swap), downdate accordingly 
+        if hasattr(self, 'Y'):
+            # Use that new W' = W - b rstar/ v, so can get W by reversing this for this line 
+            W_Wprimestar = self.W @ (self.W[t,:].conj()) + b * np.vdot(rstar, self.W[t,:].conj()) / v 
+            self.Y -= np.outer(W_Wprimestar, self.W[t,:])/self.f[t] - np.outer(b, (rstar[np.newaxis, :] @ self.R).flatten()) / v
+            self.R -= np.outer(self.W[t,:].conj(), self.W[t,:]) / self.f[t]
 
         return 
 
-    def prep_all_downdates(self, returnU=True):
+    def prep_all_downdates(self, returnU=False):
         U = np.tile(self.d, (self.f.size, 1)) + np.abs(self.W)**2 / self.f[:, np.newaxis] # do f.size in case of search swap prep, where we have not overwritten self.k...
         U = np.clip(U, 0.0, None)
         if self.p is None:
             self.U = U.max(axis=1)[:,np.newaxis]
         else:
             self.U = U**(0.5*self.p)
+
         if returnU:
             return self.U
         return 
     
-    def swap(self, t, i):
+    def swap(self, t, i, debug=False):
+        if i in self.indices[:self.k]:
+            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
+            return 
+
+        if debug and self.verbose:
+            print(f"before downdate to swap at {t}, {self.indices[t]} and {i} :")
+            print("L: ", np.round(self.L, 1))
+            print("W: ", np.round(self.W, 1))
+            print("f: ", np.round(self.f, 1))
+            print("d: ", np.round(self.d, 1))
+            print("indices: ", self.indices)
+
         self.downdate(t)
-        self.update(t, i)
+
+        if debug and self.verbose:
+            print("after downdate, before interchange/update:")
+            print("L: ", np.round(self.L, 1))
+            print("W: ", np.round(self.W, 1))
+            print("f: ", np.round(self.f, 1))
+            print("d: ", np.round(self.d, 1))
+            print("indices: ", self.indices)
+        
+        if self.k < self.L.shape[0]: # search swap, p != 2 case     
+            # interchange the t^th row and the last row to finalize this swap
+            self.indices[t], self.indices[-1] = i, self.indices[t]
+            self.W[[t,-1],:] = self.W[[-1,t],:]   # downdate() already zeroes out what was the t^th row/entries
+            self.f[[t,-1]] = self.f[[-1,t]]
+
+            # change the Cholesky factor accordingly
+            LowRankEnergy.cholesky_add(self.L[:self.k,:self.k], self.G[self.indices[:self.k], i], t)
+            LowRankEnergy.cholesky_delete(self.L, self.k)
+
+            if debug and self.verbose:
+                print("after downdate, after interchange:")
+                print("L: ", np.round(self.L, 1))
+                print("W: ", np.round(self.W, 1))
+                print("f: ", np.round(self.f, 1))
+                print("d: ", np.round(self.d, 1))
+                print("indices: ", self.indices)
+
+        else:
+            self.update(t, i)
+
+            if debug and self.verbose:
+                print("after update:")
+                print("L: ", np.round(self.L, 1))
+                print("W: ", np.round(self.W, 1))
+                print("f: ", np.round(self.f, 1))
+                print("d: ", np.round(self.d, 1))
+                print("indices: ", self.indices)
+        
+        
+
         return 
 
     def compute_swap_distances(self, idx_to_swap):  # adaptive sampling swap
@@ -521,8 +600,39 @@ class LowRankEnergy(EnergyClass):
         return self.U[idx_to_swap,:]
 
     def compute_eager_swap_values(self, idx):
-        raise NotImplementedError("Should not be calling compute_eager_swap_values for LowRank Energy")
-    
+        curr_energy = np.copy(self.energy)
+        if np.isclose(self.p, 2) and not self.test: # p = 2 case, (Algorithm 9.8)
+            W_rownorm2 = np.linalg.norm(self.W, axis=1)**2.
+            ws = self.W[:,idx]
+            ws_abs2 = np.abs(ws)**2.
+            ys = self.Y[:,idx]
+            rs = np.linalg.norm(self.R[:,idx])**2.
+
+            # vals = U[:,s]
+            vals = W_rownorm2/self.f - (rs + W_rownorm2*ws_abs2 / (self.f**2.) + 2.*(ys*ws.conj()).real/self.f) /(self.R[idx,idx] + ws_abs2 / self.f) 
+            
+            # correct for the different form of the values in the p = 2 case  
+            vals = np.sqrt(vals/self.n + curr_energy**2.)
+            print(vals, curr_energy)
+
+        else: # p != 2, (Algorithm 9.7)
+            self.update(t=self.k, i=idx)  # update prototype set at (k+1)th prototype spot with current s 
+            self.prep_all_downdates()  # precompute all downdatings including the new prototype at index k
+            
+            # choose best potential prototype swap, i
+            if self.p is None:
+                vals = self.U.flatten()  # already reduced to max entry in prep_all_downdates()
+            else:
+                # prep_all_downdates() already includes the power p in the computation
+                vals = self.U.sum(axis=1)**(1./self.p)
+            
+            # make sure the final entry of vals is the current energy
+            assert np.isclose(vals[-1], curr_energy)  
+            vals = vals[:-1] # since we've passed the above check, we can ignore the last entry, since we know it won't be chosen by .min() operation in sampler 
+        
+        return vals  
+
+
     @staticmethod
     def cholesky_delete(L, t):
         assert t < L.shape[0] and t >= 0
@@ -639,8 +749,11 @@ class ConicHullEnergy(EnergyClass):
             return 1.0*(dists == np.max(dists))   # mask where dists is largest
         return dists**(self.p)
 
-    def swap(self, t, i):
+    def swap(self, t, i, debug=False):
         assert (t < len(self.indices))  and (t >= 0)
+        if i in self.indices:
+            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
+            return 
         self.indices[t] = i 
         self.G_S[t,:] = self.X.T @ self.X[:,i].flatten()
         dists, H = self.nnls_OGM_gram(returnH=True) 
@@ -827,6 +940,9 @@ class ClusteringEnergyNonGram(EnergyClass):
     
     def swap(self, t, i):
         assert (t < len(self.indices))  and (t >= 0)
+        if i in self.indices:
+            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
+            return 
         if self.D is None:
             self.D = self.compute_distances(self.indices)
         self.indices[t] = i 
@@ -870,149 +986,3 @@ class ClusteringEnergyNonGram(EnergyClass):
     def compute_eager_swap_values(self, idx):
         raise NotImplementedError("Not implemented yet...")
 
-
-
-
-
-class ClusteringEnergyOld(EnergyClass):
-    def __init__(self, X, p=2):
-        super().__init__(X, p=p)
-        self.dim, self.n = self.X.shape
-        if self.n >= N_FLOAT_THRESHOLD:
-            self.X = self.X.astype(np.float32)
-        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
-        self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
-        self.compute_energy()
-        self.D = self.compute_distances()  
-        self.q2 = None 
-        self.h = None
-        self.type = "cluster"
-    
-    def set_k(self, k):
-        super().set_k(k)
-        
-    def add(self, i):
-        self.indices.append(i)
-        if len(self.indices) == 1:
-            # when adding the first index, we just set dists to be the distances to that point
-            self.dists = self.D[:,i].copy()
-            self.h = np.zeros((self.n,), dtype=int)
-        else:
-            # when adding subsequent indices, we need to update dists and q2
-            mask = self.D[:,i] < self.dists 
-            if self.q2 is None:
-                # when have only 2 indices, we can simply calculate q2 in terms of mask and dists
-                self.q2 = self.dists.copy()  
-                self.q2[~mask] = self.D[~mask,i].copy()
-            else:
-                # when have more than 2 indices, we use another mask to consider the case when d_i is less than q2,
-                # necessitating an update of q2 on these indices
-                mask2 = ~mask & (self.D[:,i] < self.q2)
-                self.q2[mask2] = self.D[mask2, i].copy()
-            
-            # update of h and dists only happens where mask is true. Do this after the update to q2 since we might need to use 
-            # old value of dists to update q2
-            self.h[mask] = len(self.indices) - 1
-            self.dists[mask] = self.D[mask,i].copy()
-
-        # compute the energy            
-        self.compute_energy()
-        
-        return 
-    
-
-    def swap(self, t, i):
-        # case of self.q2 is None is currently not handled
-        assert (t < len(self.indices))  and (t >= 0)
-        Vor_mask = self.h == t # in the Voronoi cell of the point being swapped out
-        mask1 = self.D[:,i] < self.dists 
-        mask2 = self.D[:,i] < self.q2 
-        notVor1 = ~Vor_mask & mask1 # outside t's Voronoi cell and d_i(j) < q_S(j)
-        notVor2 = ~Vor_mask & ~mask1 & mask2 # outside t's Voronoi cell and q_S(j) <= d_i(j) < q2(j)
-        Vor1 = Vor_mask & mask2 # inside t's Voronoi cell and d_i(j) < q2(j)
-        Vor2 = Vor_mask & ~mask2 # inside t's Voronoi cell and  d_i(j) >= q2(j)
-
-        
-        # Something wrong with Vor2 computations...
-        self.Vor1 = Vor1.copy()
-        self.Vor2 = Vor2.copy()
-        self.notVor1 = notVor1.copy()
-        self.notVor2 = notVor2.copy()
-
-        #### outside t's Voronoi cell updates
-        self.q2[notVor2] = self.D[notVor2, i]  # Case II: only update q2 where q_S(j) <= d_i(j) < q2(j)
-        self.q2[notVor1] = self.dists[notVor1] # Case I: update dists, q2, h where d_i(j) < q_S(j)
-        self.dists[notVor1] = self.D[notVor1, i]
-        self.h[notVor1] = t 
-
-        
-        self.indices[t] = i
-        
-        #### inside t's Voronoi cell updates
-        self.dists[Vor1] = self.D[Vor1,i] # Case I: update only dists where d_i(j) < q_S(j). h and q2 stay unchanged
-        # Case II: need to "fully" update dists, q2, and h
-        numV2 = Vor2.sum() 
-        Dv2 = self.D[np.ix_(Vor2,self.indices)]  # self.indices now contains the inserted point, x_i
-        h1h2 = np.argsort(Dv2,axis=1)[:,:2]  # indices of the two smallest distances in each row of Dv2
-        self.h[Vor2] = h1h2[:,0]
-        self.dists[Vor2] = Dv2[np.arange(numV2),h1h2[:,0]].flatten()
-        self.q2[Vor2] = Dv2[np.arange(numV2),h1h2[:,1]].flatten()
-        
-        self.compute_energy()
-        
-    
-    def compute_distances(self, inds=None):
-        if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
-            distances = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
-        elif type(inds) == list:
-            distances = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
-        elif inds is None:
-            distances = squareform(pdist(self.X.T, metric='euclidean'))
-        else:
-            raise ValueError(f"inds must be of type `int` or `list`")
-        
-        return distances 
-    
-    def search_distances(self, candidates):
-        # Q[i,:] = q_{+i} vector in Alg 8.2
-        if len(self.indices) == 0:
-            Q = self.D[:,candidates].T
-        else:
-            Q = np.minimum(self.dists, self.D[candidates,:])
-        return Q
-
-    def compute_swap_distances(self, idx_to_swap):
-        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
-            return np.ones(self.n)
-        inds_wo_t = self.indices[:]
-        inds_wo_t.pop(idx_to_swap)
-        dists = self.D[:,inds_wo_t].min(axis=1).flatten()
-        if self.p is None:
-            return 1.*(dists == np.max(dists))
-        return dists**(self.p)
-    
-    def compute_eager_swap_values(self, idx):
-        if idx in self.indices:
-            return np.ones(len(self.indices))*self.energy*(1.0000001)
-        Dtilde = self.D[:,self.indices+[idx]]
-        r = np.vstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1).reshape(1,-1) for j in range(len(self.indices))])
-        if len(r.shape) == 1:
-            r = r.reshape(1,-1)
-        if self.p is None:
-            r = np.max(r, axis=1)
-        else:
-            r = np.linalg.norm(r, axis=1, ord=self.p)
-        
-        return r 
-    
-    def prep_all_downdates(self, returnU=True):
-        U = np.tile(self.dists, (self.k, 1))
-        U[self.h, np.arange(self.n)] = self.q2
-        if self.p is None:
-            self.U = U.max(axis=1)[:,np.newaxis]
-        else:
-            self.U = U**(self.p)
-        if returnU:
-            return self.U
-        return 
-    

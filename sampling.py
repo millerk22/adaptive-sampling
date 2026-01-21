@@ -68,152 +68,80 @@ class AdaptiveSampler(object):
             
         return 
     
-    def swap_phase(self, method="sampling", debug=False, max_swaps=-1):
+    def swap_phase(self, method="sampling", debug=False, max_swaps=-1, test=False):
         assert method in ["search", "sampling"]
         assert type(max_swaps) == int
         k = len(self.Energy.indices)
         n = self.Energy.n
         self.Energy.prep_for_swaps(method)
-        
-        if method == "search" and self.Energy.type == "lowrank":
+
+        if method == "search":
             s, w = 0, 0
+            num_swaps = 0
             if self.record:
                 tic = perf_counter()
             while w < n:
+                if debug:
+                    print(s, self.Energy.indices, self.Energy.energy)
                 if s in self.Energy.indices:
                     s = (s + 1) % n 
                     w += 1
                     continue 
                 
                 curr_energy = np.copy(self.Energy.energy)
-                self.Energy.update(t=k, i=s)  # update prototype set at (k+1)th prototype spot with current s 
-                U = self.Energy.prep_all_downdates(returnU=True)  # precompute all downdatings including the new prototype at index k
+
+                # construct the eager swap vector, r_i vectors (with prototype indices {S/s_t \cup i} for each s_t in S currently)
+                vals = self.Energy.compute_eager_swap_values(idx=s) 
+                assert vals.size == k
+
+                swap = vals.min() < curr_energy
                 
-                # choose best potential prototype swap, i
-                if self.Energy.p is None:
-                    vals = U.flatten()  # already reduced to max entry in prep_all_downdates()
-                else:
-                    # prep_all_downdates() already includes the power p in the computation
-                    vals = U.sum(axis=1)**(1./self.Energy.p)            
-                t_poss = np.where(np.isclose(vals,np.min(vals)))[0]
-                t = t_poss[self.random_state.choice(len(t_poss))]
+                if debug:
+                    new_energy = vals.min()
                 
-                # check that the last entry corresponds to current energy 
-                assert np.isclose(vals[-1], curr_energy)  
-                
-                if vals[t] < curr_energy and t != k:  # did this swap improve energy?
-                    if debug:
-                        print(f"before downdate to swap at {t}, {self.Energy.indices[t]} and {self.Energy.indices[-1]} :")
-                        print("L: ", np.round(self.Energy.L, 1))
-                        print("W: ", np.round(self.Energy.W, 1))
-                        print("f: ", np.round(self.Energy.f, 1))
-                        print("d: ", np.round(self.Energy.d, 1))
-                        print("indices: ", self.Energy.indices)
-                    self.Energy.downdate(t)
+                # check if we perform a swap
+                if swap:  
+                    t_poss = np.where(np.isclose(vals, vals.min()))[0]
+                    t = t_poss[self.random_state.choice(len(t_poss))]
+                    s_old = self.Energy.indices[:][t]
+
+                    self.Energy.swap(t, s, debug=debug)
 
                     if debug:
-                        print("after downdate, before interchange:")
-                        print("L: ", np.round(self.Energy.L, 1))
-                        print("W: ", np.round(self.Energy.W, 1))
-                        print("f: ", np.round(self.Energy.f, 1))
-                        print("d: ", np.round(self.Energy.d, 1))
-                        print("indices: ", self.Energy.indices)
-                    # interchange the t^th row and the last row to finalize this swap
-                    self.Energy.indices[t], self.Energy.indices[-1] = s, self.Energy.indices[t]
-                    self.Energy.W[[t,-1],:] = self.Energy.W[[-1,t],:]   # downdate() already zeroes out what was the t^th row/entries
-                    self.Energy.f[[t,-1]] = self.Energy.f[[-1,t]]
-
-                    # change the Cholesky factor accordingly
-                    LowRankEnergy.cholesky_add(self.Energy.L[:k,:k], self.Energy.G[self.Energy.indices[:k], s], t)
-                    LowRankEnergy.cholesky_delete(self.Energy.L, k)
+                        if not np.isclose(new_energy, self.Energy.energy):
+                            print(f"Warning (Search Swap): Updated energy is {self.Energy.energy},\n\tthought it was going to be {new_energy}")
+                            print(f"\tt={t}, s={s}, previous s_t = {s_old}")
 
                     # record the time and energy for the swap move
                     if self.record:
                         toc = perf_counter()
                         self.record_swap(toc-tic, self.Energy.energy, w) # record info 
                         tic = perf_counter()
+                    
+                    # in the case that a max number of swaps is specified, check here if need to terminate
+                    #     (really only used with ConicEnergy because is costly)
+                    num_swaps += 1
+                    if num_swaps == max_swaps:
+                        print(f"-----Not necessarily converged, but reached specified maximum number of swaps ({max_swaps})-----")
+                        print("\tTerminating...")
+                        break
 
+                    # reset stagnation counter
                     w = 0
-
-                    if debug:
-                        print("after downdate, after interchange:")
-                        print("L: ", np.round(self.Energy.L, 1))
-                        print("W: ", np.round(self.Energy.W, 1))
-                        print("f: ", np.round(self.Energy.f, 1))
-                        print("d: ", np.round(self.Energy.d, 1))
-                        print("indices: ", self.Energy.indices)
+ 
                 else:
-                    # swap was unsuccessful, so revert the temporary update
-                    self.Energy.downdate(k)
+                    if not np.isclose(self.Energy.p, 2) and self.Energy.type == "lowrank":# swap was unsuccessful, so revert the temporary update
+                        self.Energy.downdate(k)
+                    elif np.isclose(self.Energy.p, 2) and self.Energy.type == "lowrank":
+                        if self.Energy.test:
+                            self.Energy.downdate(k)
                     w += 1
 
                 s = (s + 1) % n
 
-            if self.record:
+            if self.record: # record the time at the end for completeness
                 toc = perf_counter()
                 self.record_swap(toc-tic, self.Energy.energy, w) 
-
-        elif method == "search": # adaptive-search swap
-            i, w = 0, 0
-            num_swaps = 0
-            if self.record:
-                tic = perf_counter()
-            while w < n:
-                if debug:
-                    print(i, w, n, self.Energy.indices)
-                # skip x_i if is already in the prototype set
-                if i in self.Energy.indices:
-                    i += 1
-                    i = i % n
-                    continue
-                
-                # construct the eager swap vector, r_i vectors (with prototype indices {S/s_t \cup i} for each s_t in S currently)
-                r = self.Energy.compute_eager_swap_values(idx=i) 
-                assert r.size == k
-
-                # select one of the minimizers
-                j_poss = np.where(r == np.min(r))[0]
-                jstar = j_poss[self.random_state.choice(len(j_poss))]
-
-                
-                # if minimum swap value improves the current energy, then perform the swap and update counter
-                if r[jstar] < self.Energy.energy:
-                    if self.Energy.indices[jstar] != i: # make sure we are actually making a swap
-                        old_idx = self.Energy.indices[:][jstar]
-                        self.Energy.swap(jstar, i)
-                        if not np.isclose(self.Energy.energy, r[jstar]):
-                            print("Warning: Adaptive Search Swap")
-                            print("\t", jstar, old_idx, i, "not close", len(j_poss), len(self.Energy.indices), self.Energy.indices)
-                            print("\t", r, r[jstar], self.Energy.energy)
-                            
-                        # record the time, energy, and stagnation counter for the swap move
-                        if self.record:
-                            toc = perf_counter()
-                            self.record_swap(toc-tic, self.Energy.energy, w) # record info 
-                            tic = perf_counter()
-
-                        # in the case that a max number of swaps is specified, check here if need to terminate
-                        #     (really only used with ConicEnergy because is costly)
-                        num_swaps += 1
-                        if num_swaps == max_swaps:
-                            print(f"-----Not necessarily converged, but reached specified maximum number of swaps ({max_swaps})-----")
-                            print("\tTerminating...")
-                            break
-
-                        w = 0 # reset the stagnation counter
-                        
-                    else:
-                        w += 1
-                else:
-                    w += 1
-                
-                # update index
-                i += 1 
-                i = i % n
-            
-            if self.record:
-                toc = perf_counter()
-                self.record_swap(toc-tic, self.Energy.energy, w)
 
         elif method == "sampling":   # adaptive sampling swap with swap forcing (Currently Alg 3.4)    
             # initialize counters, force swap prob vector, and best prototype trackers
@@ -299,6 +227,10 @@ class AdaptiveSampler(object):
                         tic = perf_counter()
 
                 t = (t + 1) % k    # increment index counter
+            
+            if self.record: # record the time at the end for completeness
+                toc = perf_counter()
+                self.record_swap(toc-tic, self.Energy.energy, w)
 
             # At the end of the swap phase, set the indices to the best found
             #     - first re-initialize the Energy object to clear out the current indices
