@@ -1,8 +1,0 @@
-dataset: salinas
-k: 10
-k_oversample: 50
-energy: conic
-record: 1
-numseeds: 10
-powers: [1, 2, 3, 5, None]
-

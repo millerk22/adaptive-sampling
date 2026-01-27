@@ -1,8 +1,0 @@
-dataset: blobs 
-k: 5
-k_oversample: 25
-energy: cluster-dense
-time: 1
-numseeds: 10
-powers: [1, 2, 3, 5, None]
-
