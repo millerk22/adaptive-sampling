@@ -232,21 +232,44 @@ class ClusteringEnergy(EnergyClass):
         if self.p is None:
             return 1.*(dists == np.max(dists))
         return (dists/dists.max())**(self.p)
-        #return dists**self.p
     
-    def compute_eager_swap_values(self, idx):
-        if idx in self.indices:
+    def compute_eager_swap_values(self, idx): # Alg. 8.4
+        if idx in self.indices: # should be ignored
             return np.ones(len(self.indices))*self.energy*(1.1)
-        Dtilde = self.D[:,self.indices+[idx]]
-        r = np.vstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1).reshape(1,-1) for j in range(len(self.indices))])
-        if len(r.shape) == 1:
-            r = r.reshape(1,-1)
-        if self.p is None:
-            r = np.max(r, axis=1)
-        else:
-            r = np.linalg.norm(r, axis=1, ord=self.p)
         
-        return r 
+        Delta = np.zeros(len(self.indices), dtype=float)
+        cost_change = 0 
+        d_i = self.D[:,idx].copy()
+        
+        if self.p is not None:
+            regI = d_i < self.dists
+            regII = (~regI) & (d_i < self.next_dists)
+            regIII = ~(regI | regII)
+            
+            cost_change = np.sum(d_i[regI]**self.p - self.dists[regI]**self.p)
+
+            # precompute the per-point changes from regions II and III
+            changeII = d_i[regII]**self.p - self.dists[regII]**self.p
+            changeIII = self.next_dists[regIII]**self.p - self.dists[regIII]**self.p
+
+            # accumulate changes into Delta for each prototype
+            np.add.at(Delta, self.near[regII], changeII)
+            np.add.at(Delta, self.near[regIII], changeIII)
+
+            Delta = Delta + cost_change
+
+            #### Need to compare against current energy in the sampler given current implementation
+            Delta += self.energy**self.p 
+            Delta = Delta**(1./self.p)
+
+        else: # p = \infty case isn't as straightforward, we'll just do normal way here
+            Dtilde = self.D[:,self.indices+[idx]]
+            Delta = np.vstack([np.min(np.hstack((Dtilde[:,:j], Dtilde[:,j+1:])), axis=1).reshape(1,-1) for j in range(len(self.indices))])
+            if len(Delta.shape) == 1:
+                Delta = Delta.reshape(1,-1)
+            Delta = Delta.max(axis=1) 
+        
+        return Delta
 
     def prep_for_swaps(self, method="sampling", debug=False):
         if self.k > 2:
@@ -537,9 +560,7 @@ class LowRankEnergy(EnergyClass):
         U = np.tile(self.d, (self.f.size, 1)) + np.abs(self.W)**2 / self.f[:, np.newaxis] # do f.size in case of search swap prep, where we have not overwritten self.k...
         U = np.clip(U, 0.0, None)
         if self.p is None:
-            max_inds = np.argmax(U, axis=1)
-            self.U = np.zeros_like(U)
-            self.U[np.arange(U.shape[0]), max_inds] = U[np.arange(U.shape[0]), max_inds] 
+            self.U = np.sqrt(U)
         elif np.isclose(self.p, 2):
             self.U = U
         else:
@@ -637,7 +658,6 @@ class LowRankEnergy(EnergyClass):
             
             # choose best potential prototype swap, i
             if self.p is None:
-                print(self.U[:,:5])
                 vals = self.U.max(axis=1).flatten()  # already reduced to max entry in prep_all_downdates()
             else:
                 # prep_all_downdates() already includes the power p in the computation
