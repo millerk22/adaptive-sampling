@@ -1,5 +1,9 @@
 # adaptive-sampling
 
+
+NEED TO REVISE README TO REFLECT CHANGES MADE 
+
+
 Code for adaptive sampling framework. See the ``demo.ipynb`` for a brief demo of usage of the ``Energy(X, k=k, p=p)`` and ``AdaptiveSampler(Energy)`` objects for specific dataset applications. 
 
 See ``requirements.txt`` file for some necessary packages for running this code.
