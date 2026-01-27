@@ -51,7 +51,8 @@ class AdaptiveSampler(object):
 
                 else: # adaptive-sampling build
                     if self.Energy.p is not None:
-                        q = self.Energy.dists**(self.Energy.p)
+                        q = (self.Energy.dists/self.Energy.dists.max())**(self.Energy.p)
+                        #q = self.Energy.dists**(self.Energy.p)
                         idx = self.random_state.choice(range(self.Energy.n), p=q/q.sum())
                     else:
                         # adaptive sampling with p = infty
@@ -130,11 +131,14 @@ class AdaptiveSampler(object):
                     w = 0
  
                 else:
-                    if not np.isclose(self.Energy.p, 2) and self.Energy.type == "lowrank":# swap was unsuccessful, so revert the temporary update
-                        self.Energy.downdate(k)
-                    elif np.isclose(self.Energy.p, 2) and self.Energy.type == "lowrank":
-                        if self.Energy.test:
+                    if self.Energy.type == "lowrank": 
+                        if self.Energy.p is None:
                             self.Energy.downdate(k)
+                        else:
+                            if not np.isclose(self.Energy.p, 2):# swap was unsuccessful, so revert the temporary update
+                                self.Energy.downdate(k)
+                            elif np.isclose(self.Energy.p, 2) and self.Energy.test:
+                                self.Energy.downdate(k)
                     w += 1
 
                 s = (s + 1) % n
@@ -200,6 +204,7 @@ class AdaptiveSampler(object):
 
                     # Step 4: If stagnated, then force a swap (p < \inf case)
                     if (s_prime == self.Energy.indices[t]) and (w == k) and (self.Energy.p is not None):
+                        print("FORCED SWAP, w = ", w)
                         probs = np.concatenate(([1], np.cumprod(p)[:-1])) * (1. - p) / (1. - np.prod(p))  # probabilities for selecting which prototype to force a swap
                         j = self.random_state.choice(range(k), p=probs)   
                         t = (t + j + 1) % k # +1 because p[0] corresponds to prob of next index after current t
@@ -214,7 +219,6 @@ class AdaptiveSampler(object):
                 if s_prime != self.Energy.indices[t]:
                     self.Energy.swap(t, s_prime)
                     u += 1                   # increment swap counter
-                    w = 0                       # reset stagnation counter
                     # track best energy found so far
                     if self.Energy.energy < best_energy:
                         best_energy = self.Energy.energy
@@ -225,6 +229,7 @@ class AdaptiveSampler(object):
                         toc = perf_counter()
                         self.record_swap(toc-tic, self.Energy.energy, w) # record info 
                         tic = perf_counter()
+                    w = 0                       # reset stagnation counter
 
                 t = (t + 1) % k    # increment index counter
             

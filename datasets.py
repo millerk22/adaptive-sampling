@@ -9,11 +9,19 @@ from graphlearning import graph
 
 def load_dataset(dataset_name, n_test=500):
     if dataset_name == "blobssmallest":
-        X, labels = make_blobs(5*[50], n_features=200, cluster_std=0.1)
+        X, labels = make_blobs(5*[50], n_features=200, cluster_std=0.1, random_state=42)
     elif dataset_name == "blobssmall":
-        X, labels = make_blobs(5*[100], n_features=200, cluster_std=0.1)
+        X, labels = make_blobs(5*[100], n_features=200, cluster_std=0.1, random_state=42)
     elif dataset_name == "blobs":
-        X, labels = make_blobs(5*[500], n_features=20, cluster_std=0.01)
+        X, labels = make_blobs(5*[500], n_features=20, cluster_std=0.01, random_state=42)
+    elif dataset_name == "blobs2":
+        X, labels = make_blobs(5*[50], n_features=2, cluster_std=0.1, random_state=42)
+    elif dataset_name == "blobs5":
+        X, labels = make_blobs(5*[50], n_features=5, cluster_std=0.1, random_state=42)
+    elif dataset_name == "blobs20":
+        X, labels = make_blobs(5*[50], n_features=20, cluster_std=0.1, random_state=42)
+    elif dataset_name == "blobs200":
+        X, labels = make_blobs(5*[50], n_features=200, cluster_std=0.01, random_state=42)
     elif dataset_name == "apartment":
         data = fetch_ucirepo(id=555)
         X = data.data.features
@@ -116,7 +124,7 @@ def load_dataset(dataset_name, n_test=500):
         nan_inds = np.where(np.isnan(X))
         col_means = np.nanmean(X, axis=0)
         X[nan_inds] = np.take(col_means, nan_inds[1])
-        X = X.T
+        X = X.T.astype(np.float64)
         print(X.shape, np.unique(labels).size)
 
     elif dataset_name == "smile":

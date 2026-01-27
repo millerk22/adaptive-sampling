@@ -121,7 +121,6 @@ class ClusteringEnergy(EnergyClass):
             self.dists[closest_to_i] = self.D[closest_to_i,i]
             self.near[closest_to_i] = len(self.indices)
 
-        self.q = self.dists**self.p if self.p is not None else self.dists
         self.indices.append(i)
         # compute the energy            
         self.compute_energy()
@@ -152,7 +151,7 @@ class ClusteringEnergy(EnergyClass):
             |   d_near = d_i             |                              |                                |
             ----------------------------------------------------------------------------------------------
         '''
-        # case of self.q2 is None is currently not handled
+
         if len(self.indices) == 0:
             raise ValueError("Cannot swap with no prototypes chosen.")
         assert (t < len(self.indices))  and (t >= 0)  
@@ -232,7 +231,8 @@ class ClusteringEnergy(EnergyClass):
         dists = self.D[:,inds_wo_t].min(axis=1).flatten()
         if self.p is None:
             return 1.*(dists == np.max(dists))
-        return dists**(self.p)
+        return (dists/dists.max())**(self.p)
+        #return dists**self.p
     
     def compute_eager_swap_values(self, idx):
         if idx in self.indices:
@@ -335,11 +335,14 @@ class LowRankEnergy(EnergyClass):
     
     def prep_for_swaps(self, method="sampling"):
         if method == "search":
-            if np.isclose(self.p, 2) and not self.test:
+            p2case = False 
+            if self.p is not None:
+                if np.isclose(self.p, 2) and not self.test:
+                    p2case = True
+            if p2case:
                 if not hasattr(self, 'R'): # if did not have a search build previously, compute R here 
                     self.R = self.G - self.W.conj().T @ (self.G[np.ix_(self.indices,self.indices)] @ self.W)
                 self.Y = self.W.conj() @ self.R # compute Y = W R upfront, updates will be easy thereafter 
-
             else:
                 if self.indices[-1] == -1:
                     print("WARNING.... Looks like you're calling prep_for_swaps a second time, which can cause problems..")
@@ -350,7 +353,7 @@ class LowRankEnergy(EnergyClass):
                 self.L[-1,-1] = 1.0
                 self.f = np.concatenate((self.f, np.array([0.0])))
                 self.indices = self.indices + [-1]  # placeholder for temporary (k+1) prototype
-        
+            
         return 
     
     def end_swaps(self):
@@ -389,11 +392,15 @@ class LowRankEnergy(EnergyClass):
 
             # update W
             r = self.G[i, :] - self.G[i, self.indices] @ self.W[:k_curr, :]
-            self.W[k_curr, :] = r / v
-            self.W[:k_curr, :] -= np.outer(b, r) / v
-
+            r[i] = v
+            r_v = r / v
+            self.W[k_curr, :] = r_v
+            self.W[:k_curr, :] -= np.outer(b, r_v) 
+            
             # update d
+            dold = np.copy(self.d)
             self.d -= np.abs(r)**2 / v
+            min_idx = np.argmin(self.d)
         
         # Update R if we're in a search build
         if hasattr(self, 'R'):
@@ -402,8 +409,8 @@ class LowRankEnergy(EnergyClass):
 
         # Sanity check: d should not be significantly negative
         if self.d.min() < -1e-9:
-            print("something wrong, got a very negative value in d: ", self.d.min())
-        
+            print("Something wrong, got a very negative value in d: ", self.d.min())
+            print("\tPerhaps increase precision to float64...")
         # Clip small negatives from numerical errors
         self.d = np.clip(self.d, 0.0, None)
         
@@ -530,7 +537,9 @@ class LowRankEnergy(EnergyClass):
         U = np.tile(self.d, (self.f.size, 1)) + np.abs(self.W)**2 / self.f[:, np.newaxis] # do f.size in case of search swap prep, where we have not overwritten self.k...
         U = np.clip(U, 0.0, None)
         if self.p is None:
-            self.U = U.max(axis=1)[:,np.newaxis]
+            max_inds = np.argmax(U, axis=1)
+            self.U = np.zeros_like(U)
+            self.U[np.arange(U.shape[0]), max_inds] = U[np.arange(U.shape[0]), max_inds] 
         elif np.isclose(self.p, 2):
             self.U = U
         else:
@@ -605,7 +614,11 @@ class LowRankEnergy(EnergyClass):
 
     def compute_eager_swap_values(self, idx): # adaptive search swap
         curr_energy = np.copy(self.energy)
-        if np.isclose(self.p, 2) and not self.test: # p = 2 case, (Algorithm 9.8)
+        alg98 = False
+        if self.p is not None:
+            if np.isclose(self.p, 2) and not self.test:
+                alg98 = True
+        if alg98: # p = 2 case, (Algorithm 9.8)
             W_rownorm2 = np.linalg.norm(self.W, axis=1)**2.
             ws = self.W[:,idx]
             ws_abs2 = np.abs(ws)**2.
@@ -617,7 +630,6 @@ class LowRankEnergy(EnergyClass):
             
             # correct for the different form of the values in the p = 2 case  
             vals = np.sqrt(vals + curr_energy**2.)
-            
 
         else: # p != 2, (Algorithm 9.7)
             self.update(t=self.k, i=idx)  # update prototype set at (k+1)th prototype spot with current s 
@@ -625,7 +637,8 @@ class LowRankEnergy(EnergyClass):
             
             # choose best potential prototype swap, i
             if self.p is None:
-                vals = self.U.flatten()  # already reduced to max entry in prep_all_downdates()
+                print(self.U[:,:5])
+                vals = self.U.max(axis=1).flatten()  # already reduced to max entry in prep_all_downdates()
             else:
                 # prep_all_downdates() already includes the power p in the computation
                 vals = self.U.sum(axis=1)**(1./self.p)
