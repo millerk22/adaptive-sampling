@@ -20,10 +20,6 @@ class EnergyClass(object):
         self.indices = []
         self.dists = np.ones(self.n)
         self.type = None
-        if sps.issparse(X):
-            self.Xfro_norm2 = sps.linalg.norm(self.X, ord='fro')**2.
-        else:
-            self.Xfro_norm2 = np.linalg.norm(self.X, ord='fro')**2.
 
     def set_k(self, k):
         assert type(k) == int 
@@ -402,7 +398,7 @@ class LowRankEnergy(EnergyClass):
             a = solve_triangular(self.L[:k_curr, :k_curr], self.G[self.indices, i], lower=True)
             v = G_ii - np.vdot(a, a).real
             if np.isclose(v, 0.0) or v < 0.0:
-                print(f"WARNING: Adding {i} to the decomposition resulted in non-positive v = {v} (i.e., nonsingular G[S, S])...")
+                print(f"WARNING: Adding {i} to the decomposition resulted in non-positive v = {v} (i.e., singular G[S, S])...")
                 print("\tNOT ADDING...")
                 return 
 
@@ -534,7 +530,7 @@ class LowRankEnergy(EnergyClass):
         v = self.G[i,i].real - np.vdot(a_t, a_t).real
         if np.isclose(v, 0.0) or v < 0.0:
             if self.verbose:
-                print(f"WARNING: Updating to add {i} to the decomposition resulted in non-positive v = {v} (i.e., nonsingular G[S, S])...")
+                print(f"WARNING: Updating to add {i} to the decomposition resulted in non-positive v = {v} (i.e., singular G[S, S])...")
                 print("\tNOT UPDATING, reverting to previous prototypes...")
             
             # revert back and don't perform the swap
@@ -951,8 +947,7 @@ class ConicHullEnergy(EnergyClass):
         
         dist_vals = self.G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
         dist_vals[dist_vals < 0] = 0.0
-        dist_vals = np.sqrt(dist_vals / self.Xfro_norm2)    # we consider Euclidean distances and divide by Fro norm of X to 
-                                                            # keep values from being too large with high-dimensional datasets
+        dist_vals = np.sqrt(dist_vals )    # we consider Euclidean distances 
         # if verbose:
         #     return {"dist_vals":dist_vals, "iters":i, "eps":eps, "eps0":eps0, "EPS":EPS }, H
 
@@ -963,86 +958,3 @@ class ConicHullEnergy(EnergyClass):
             return dist_vals, H 
         
         return dist_vals, None
-
-
-
-
-
-
-class ClusteringEnergyNonGram(EnergyClass):
-    """
-    Need to debug and make sure it aligns with the fullD corresponding energy.
-    """
-    def __init__(self, X, p=2):
-        super().__init__(X, p=p)
-        self.dim, self.n = self.X.shape
-        if self.n >= N_FLOAT_THRESHOLD:
-            self.X = self.X.astype(np.float32)
-        self.x_squared_norms = np.linalg.norm(self.X, axis=0)**2.
-        self.dists = np.ones(self.n) # initial energy for adaptive sampling should give equal weight to every point
-        self.compute_energy()
-        self.type = "cluster-nongram"
-    
-    def set_k(self, k):
-        super().set_k(k)
-        self.D = np.zeros((self.k, self.n), dtype=self.X.dtype)
-        
-    def add(self, i):
-        self.D[len(self.indices),:] = self.compute_distances(i)
-        if len(self.indices) > 0:
-            np.minimum(self.D[len(self.indices),:], self.dists, out=self.dists)
-        else:
-            self.dists = self.D[0,:].copy()
-        self.indices.append(i)
-        self.compute_energy()
-        
-        return 
-    
-    def swap(self, t, i):
-        assert (t < len(self.indices))  and (t >= 0)
-        if i in self.indices:
-            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
-            return 
-        if self.D is None:
-            self.D = self.compute_distances(self.indices)
-        self.indices[t] = i 
-        self.D[t,:] = self.compute_distances(i)
-        self.dists = np.min(self.D, axis=0) 
-        self.compute_energy()
-        
-    
-    def compute_distances(self, inds):
-        if type(inds) in [int, np.int8, np.int16, np.int32, np.int64]:
-            # dists = euclidean_distances(self.X[:,inds].reshape(1,-1), self.X.T, Y_norm_squared=self.x_squared_norms, \
-            #                            squared=False).flatten()
-            distances = cdist(self.X[:,inds].reshape(1,-1), self.X.T, metric='euclidean').flatten()
-        elif type(inds) == list:
-            #dists = euclidean_distances(self.X[:,inds].T, self.X.T, Y_norm_squared=self.x_squared_norms, \
-                                        #  X_norm_squared=self.x_squared_norms[inds], squared=False)
-            distances = cdist(self.X[:,inds].T, self.X.T, metric='euclidean')
-        else:
-            raise ValueError(f"inds must be of type `int` or `list`")
-        
-        return distances 
-    
-    def search_distances(self, candidates):
-        if len(self.indices) > 0:
-            search_dists = [np.minimum(self.dists, self.compute_distances(c)) for c in candidates]
-        else:
-            search_dists = [self.compute_distances(c) for c in candidates]
-        
-        return np.array(search_dists)
-
-    def compute_swap_distances(self, idx_to_swap):
-        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to uniform sampling over the dataset
-            return np.ones(self.n)
-        inds_wo_t = self.indices[:]
-        inds_wo_t.pop(idx_to_swap)
-        dists = self.compute_distances(inds_wo_t).min(axis=0).flatten()
-        if self.p is None:
-            return 1.*(dists == np.max(dists))
-        return dists**(self.p)
-    
-    def compute_eager_swap_values(self, idx):
-        raise NotImplementedError("Not implemented yet...")
-

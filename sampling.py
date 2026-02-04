@@ -83,9 +83,8 @@ class AdaptiveSampler(object):
             if self.record:
                 tic = perf_counter()
             while w < n:
-                if debug:
-                    print(s, self.Energy.indices, self.Energy.energy)
-                    print("\t", [np.allclose(self.Energy.X[:,s], self.Energy.X[:,i]) for i in self.Energy.indices])
+                # if debug:  
+                    # print("\t", [np.allclose(self.Energy.X[:,s], self.Energy.X[:,i]) for i in self.Energy.indices])
                 if s in self.Energy.indices:
                     s = (s + 1) % n 
                     w += 1
@@ -97,13 +96,15 @@ class AdaptiveSampler(object):
                 vals = self.Energy.compute_eager_swap_values(idx=s) 
                 assert vals.size == k
 
-                swap = vals.min() < curr_energy
+                swap = (vals.min() < curr_energy) and ~np.isclose(vals.min(), curr_energy)
                 
                 if debug:
                     new_energy = vals.min()
                 
                 # check if we perform a swap
                 if swap: 
+                    if debug: 
+                        print("swap!", s, w, np.isclose(vals.min(), curr_energy), self.Energy.energy)
                     t_poss = np.where(np.isclose(vals, vals.min()))[0]
                     t = t_poss[self.random_state.choice(len(t_poss))]
                     s_old = self.Energy.indices[:][t]
@@ -111,7 +112,7 @@ class AdaptiveSampler(object):
                     self.Energy.swap(t, s, debug=debug)
                     num_swaps += 1
 
-                    if debug:
+                    if debug and False:
                         # check if R, Y, W, L are still correct after some swaps 
                         print("Checking components after ", num_swaps , " swaps...")
                         check_components(self.Energy, nround=5, checkR=self.Energy.p==2, verbose=False)
