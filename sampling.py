@@ -1,6 +1,7 @@
 import numpy as np
 from energies import *
 from time import perf_counter
+from util import *
 
 
 class AdaptiveSampler(object):
@@ -84,6 +85,7 @@ class AdaptiveSampler(object):
             while w < n:
                 if debug:
                     print(s, self.Energy.indices, self.Energy.energy)
+                    print("\t", [np.allclose(self.Energy.X[:,s], self.Energy.X[:,i]) for i in self.Energy.indices])
                 if s in self.Energy.indices:
                     s = (s + 1) % n 
                     w += 1
@@ -101,17 +103,25 @@ class AdaptiveSampler(object):
                     new_energy = vals.min()
                 
                 # check if we perform a swap
-                if swap:  
+                if swap: 
                     t_poss = np.where(np.isclose(vals, vals.min()))[0]
                     t = t_poss[self.random_state.choice(len(t_poss))]
                     s_old = self.Energy.indices[:][t]
 
                     self.Energy.swap(t, s, debug=debug)
+                    num_swaps += 1
 
                     if debug:
+                        # check if R, Y, W, L are still correct after some swaps 
+                        print("Checking components after ", num_swaps , " swaps...")
+                        check_components(self.Energy, nround=5, checkR=self.Energy.p==2, verbose=False)
+
                         if not np.isclose(new_energy, self.Energy.energy):
                             print(f"Warning (Search Swap): Updated energy is {self.Energy.energy},\n\tthought it was going to be {new_energy}")
                             print(f"\tt={t}, s={s}, previous s_t = {s_old}")
+                            energy_ = LowRankEnergy(self.Energy.X, p=self.Energy.p)
+                            energy_.init_set(self.Energy.indices[:t] + [s] + self.Energy.indices[t+1:])
+                            print(f"\tRecomputed energy from scratch is {energy_.energy}")
 
                     # record the time and energy for the swap move
                     if self.record:
@@ -119,9 +129,10 @@ class AdaptiveSampler(object):
                         self.record_swap(toc-tic, self.Energy.energy, w) # record info 
                         tic = perf_counter()
                     
+                    
                     # in the case that a max number of swaps is specified, check here if need to terminate
                     #     (really only used with ConicEnergy because is costly)
-                    num_swaps += 1
+                    
                     if num_swaps == max_swaps:
                         print(f"-----Not necessarily converged, but reached specified maximum number of swaps ({max_swaps})-----")
                         print("\tTerminating...")

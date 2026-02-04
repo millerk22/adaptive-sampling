@@ -264,3 +264,83 @@ def get_reference_inds(X, labels, p=2):
         # choose the point that is closest each centroid to represent it in our reference_indices
         reference_inds.append(i_inds[np.argmin(pairwise_distances(X[i_inds], centers_p[i,:].reshape(1,-1)))]) 
     return reference_inds
+
+
+
+
+
+from scipy.linalg import cholesky
+
+
+def get_components_naive(G, indices):
+    L = cholesky(G[np.ix_(indices, indices)], lower=True)
+    W = np.linalg.inv(G[np.ix_(indices, indices)]) @ G[indices,:]
+    f = np.diag(np.linalg.inv(G[np.ix_(indices, indices)])).real
+    d = np.diag(G).real - np.sum(W.conj() * G[indices,:], axis=0).real
+    return L, W, f, d
+
+
+def check_components(energy, t=None, verbose=True, nround=4, checkR=False, extradim=False):
+    if t is not None:
+        indices = energy.indices[:t] + energy.indices[t+1:]
+        indices_t = list(range(t)) + list(range(t+1, len(energy.indices)))
+    else:
+        indices = energy.indices[:]
+        indices_t = list(range(len(energy.indices)))
+    if extradim:
+        indices = indices[:-1]
+        indices_t = indices_t[:-1]
+    print("inds = ", indices)
+    print("G[inds,inds] symmetric = ", np.allclose(energy.G[np.ix_(indices, indices)], energy.G[np.ix_(indices, indices)].conj().T))
+    print("G[inds, inds] invertible = ", np.linalg.cond(energy.G[np.ix_(indices, indices)]) < 1/np.finfo(energy.G.dtype).eps)
+    L_naive, W_naive, f_naive, d_naive = get_components_naive(energy.G, indices)
+    matchL = np.allclose(energy.L[np.ix_(indices_t, indices_t)], L_naive)
+    matchW = np.allclose(energy.W[indices_t, :], W_naive)
+    matchf = np.allclose(energy.f[indices_t], f_naive)
+    matchd = np.allclose(energy.d, d_naive)
+    print("L,W,f,d match: ", matchL and matchW and matchf and matchd)
+    
+    print("L close:", matchL)
+    if not matchL and verbose:
+        print("Computed L:\n", np.round(energy.L[np.ix_(indices_t, indices_t)], nround))
+        print("Naive L:\n", np.round(L_naive, nround))
+    print("W close:", matchW)
+    if not matchW and verbose:
+        print("Computed W:\n", np.round(energy.W[indices_t, :], nround))
+        print("Naive W:\n", np.round(W_naive, nround))
+        print("full self.W:\n", np.round(energy.W, nround))
+    print("f close:", matchf)
+    if not matchf and verbose:
+        print("Computed f:\n", np.round(energy.f[indices_t],nround))
+        print("Naive f:\n", np.round(f_naive, nround))
+        print("full self.f:\n", np.round(energy.f, nround))
+    print("d close:", matchd)
+    if not matchd and verbose:
+        print("Computed d:\n", np.round(energy.d, nround))
+        print("Naive d:\n", np.round(d_naive, nround))
+    
+    if checkR:
+        R_naive = energy.G - energy.G[:, indices] @ np.linalg.inv(energy.G[np.ix_(indices, indices)]) @ energy.G[indices, :]
+        matchR = np.allclose(R_naive, energy.R)
+        print("R close:", matchR)
+        if not matchR and verbose:
+            print("Computed R:\n", np.round(energy.R, nround))
+            print("Naive R:\n", np.round(R_naive, nround))
+        if hasattr(energy, 'Y'):
+            Y_naive = energy.W @ energy.R
+            matchY = np.allclose(Y_naive, energy.Y)
+            print("Y close: ", matchY)
+            if not matchY and verbose:
+                print("Is close = ", np.where(np.isclose(energy.Y, Y_naive)))
+                print("Computed Y:\n", np.round(energy.Y, nround))
+                print("Naive Y:\n", np.round(Y_naive, nround))
+
+    if matchL and matchW and matchf and matchd and (t is not None) and verbose:
+        print("All components match naive computation!")
+        print("L @ t:\n", np.round(energy.L[t, :], nround)) 
+        print("W @ t:\n", np.round(energy.W[t, :], nround))
+        print("f @ t:\n", np.round(energy.f[t], nround))
+        print("d @ t:\n", np.round(energy.d[t], nround))
+        if checkR and matchR:
+            print("R @ t:\n", np.round(energy.R[:, t], nround))
+    return 

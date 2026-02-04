@@ -10,7 +10,7 @@ from datasets import *
 from util import *
 
 
-ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"]#, "sampling_search"] 
+ALL_METHODS = ["search", "sampling", "uniform", "search_search", "sampling_sampling"] #, "sampling_search"] 
 OVERSAMPLE_METHODS = ["sampling", "uniform"] 
 
 

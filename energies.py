@@ -365,7 +365,7 @@ class LowRankEnergy(EnergyClass):
             if p2case:
                 if not hasattr(self, 'R'): # if did not have a search build previously, compute R here 
                     self.R = self.G - self.W.conj().T @ (self.G[np.ix_(self.indices,self.indices)] @ self.W)
-                self.Y = self.W.conj() @ self.R # compute Y = W R upfront, updates will be easy thereafter 
+                self.Y = self.W @ self.R # compute Y = W R upfront, updates will be easy thereafter 
             else:
                 if self.indices[-1] == -1:
                     print("WARNING.... Looks like you're calling prep_for_swaps a second time, which can cause problems..")
@@ -401,6 +401,10 @@ class LowRankEnergy(EnergyClass):
             # Solve L a = G[indices, i]
             a = solve_triangular(self.L[:k_curr, :k_curr], self.G[self.indices, i], lower=True)
             v = G_ii - np.vdot(a, a).real
+            if np.isclose(v, 0.0) or v < 0.0:
+                print(f"WARNING: Adding {i} to the decomposition resulted in non-positive v = {v} (i.e., nonsingular G[S, S])...")
+                print("\tNOT ADDING...")
+                return 
 
             # update L
             self.L[k_curr, :k_curr] = a.conj()
@@ -528,12 +532,25 @@ class LowRankEnergy(EnergyClass):
         a = solve_triangular(self.L, self.G[self.indices, i], lower=True)
         a_t = np.concatenate((a[:t], a[t+1:]))
         v = self.G[i,i].real - np.vdot(a_t, a_t).real
+        if np.isclose(v, 0.0) or v < 0.0:
+            if self.verbose:
+                print(f"WARNING: Updating to add {i} to the decomposition resulted in non-positive v = {v} (i.e., nonsingular G[S, S])...")
+                print("\tNOT UPDATING, reverting to previous prototypes...")
+            
+            # revert back and don't perform the swap
+            return self.update(t, self.indices[t]) 
+            
         b = solve_triangular(self.L, a, lower=True, trans='C')
         b[t] = -1.0
 
         # update f, W, and d
         self.f += np.abs(b)**2. / v
         rstar = self.G[i,:] -  self.G[i, self.indices] @ self.W
+
+        if hasattr(self, 'Y'):
+            # compute this prior to update self.W
+            W_Wprimestar = self.W @ (self.W[t,:].conj() - b[t].conj() * rstar.conj()/v) 
+
         self.W -= np.outer(b, rstar)/ v
         self.d -= np.abs(rstar)**2. / v
 
@@ -549,10 +566,8 @@ class LowRankEnergy(EnergyClass):
         
         # if have attribute Y and R (p=2 search swap), downdate accordingly 
         if hasattr(self, 'Y'):
-            # Use that new W' = W - b rstar/ v, so can get W by reversing this for this line 
-            W_Wprimestar = self.W @ (self.W[t,:].conj()) + b * np.vdot(rstar, self.W[t,:].conj()) / v 
-            self.Y -= np.outer(W_Wprimestar, self.W[t,:])/self.f[t] - np.outer(b, (rstar[np.newaxis, :] @ self.R).flatten()) / v
             self.R -= np.outer(self.W[t,:].conj(), self.W[t,:]) / self.f[t]
+            self.Y -= np.outer(W_Wprimestar, self.W[t,:])/self.f[t] + np.outer(b, (rstar[np.newaxis, :] @ self.R).flatten()) / v
 
         return 
 
@@ -574,7 +589,7 @@ class LowRankEnergy(EnergyClass):
         if i in self.indices[:self.k]:
             print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
             return 
-
+        
         if debug and self.verbose:
             print(f"before downdate to swap at {t}, {self.indices[t]} and {i} :")
             print("L: ", np.round(self.L, 1))
@@ -645,12 +660,21 @@ class LowRankEnergy(EnergyClass):
             ws_abs2 = np.abs(ws)**2.
             ys = self.Y[:,idx]
             rs = np.linalg.norm(self.R[:,idx])**2.
+            
+            denom = self.R[idx,idx] + ws_abs2 / self.f
+            skip_mask = np.isclose(denom / self.f, 0.0)   # for values where skip_mask = True, don't compute the swap value (results in non-singular G[S, S] which throws things off)
+            denom[skip_mask] = 1.0  # to avoid division by zero warnings
 
             # vals = U[:,s]
-            vals = W_rownorm2/self.f - (rs + W_rownorm2*ws_abs2 / (self.f**2.) + 2.*(ys*ws.conj()).real/self.f) /(self.R[idx,idx] + ws_abs2 / self.f) 
+            vals = W_rownorm2/self.f - (rs + W_rownorm2*ws_abs2 / (self.f**2.) + 2.*(ys*ws.conj()).real/self.f) /denom 
+            vals[skip_mask] = np.inf  # set these to infinity so they are not chosen
             
-            # correct for the different form of the values in the p = 2 case  
-            vals = np.sqrt(vals + curr_energy**2.)
+            # correct for the different form of the values in the p = 2 case 
+            shiftvals = vals + curr_energy**2. 
+            #print(shiftvals, vals.max(), vals.min(), curr_energy**2.)
+            vals = np.sqrt(shiftvals)
+            if (shiftvals < 0).any():
+                print("\tbad", vals, curr_energy)
 
         else: # p != 2, (Algorithm 9.7)
             self.update(t=self.k, i=idx)  # update prototype set at (k+1)th prototype spot with current s 

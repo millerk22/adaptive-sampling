@@ -37,6 +37,9 @@ def load_dataset(dataset_name, n_test=500):
         X = data.data.features
         labels = data.data.targets
         print(X.shape)
+    elif dataset_name == "yalefaces":
+        X, labels = np.load("./data/yalefaces.npz", allow_pickle=True).values()
+        print(X.shape)
     elif dataset_name == "iris":
         X, labels = load_iris(return_X_y=True)
     elif dataset_name == "digits":
@@ -115,6 +118,11 @@ def load_dataset(dataset_name, n_test=500):
         X = X[subset]
         print(X.shape)
         labels = labels[subset]
+    
+    elif dataset_name == "gaussian":
+        rand_state = np.random.RandomState(42)  
+        X = rand_state.randn(500, 50)
+        labels = None 
     
     elif dataset_name == "snp":
         labels = np.load("./data/snps/labels.npy", allow_pickle=True)
