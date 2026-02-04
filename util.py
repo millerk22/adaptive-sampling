@@ -9,6 +9,7 @@ from sampling import *
 
 from sklearn.metrics import pairwise_distances
 from scipy.optimize import minimize
+from scipy.linalg import cholesky
 
 
 def find_methods_to_do(args, p):
@@ -267,9 +268,6 @@ def get_reference_inds(X, labels, p=2):
 
 
 
-
-
-from scipy.linalg import cholesky
 
 
 def get_components_naive(G, indices):

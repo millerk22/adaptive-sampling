@@ -671,10 +671,9 @@ class LowRankEnergy(EnergyClass):
             
             # correct for the different form of the values in the p = 2 case 
             shiftvals = vals + curr_energy**2. 
-            #print(shiftvals, vals.max(), vals.min(), curr_energy**2.)
             vals = np.sqrt(shiftvals)
             if (shiftvals < 0).any():
-                print("\tbad", vals, curr_energy)
+                print("\tWARNING: p=2 lowrank eager swap values wrong?", vals, curr_energy)
 
         else: # p != 2, (Algorithm 9.7)
             self.update(t=self.k, i=idx)  # update prototype set at (k+1)th prototype spot with current s 
