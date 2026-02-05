@@ -104,7 +104,7 @@ class AdaptiveSampler(object):
                 # check if we perform a swap
                 if swap: 
                     if debug: 
-                        print("swap!", s, w, np.isclose(vals.min(), curr_energy), self.Energy.energy)
+                        print("swap!", s, w, self.Energy.energy, new_energy)
                     t_poss = np.where(np.isclose(vals, vals.min()))[0]
                     t = t_poss[self.random_state.choice(len(t_poss))]
                     s_old = self.Energy.indices[:][t]

@@ -6,7 +6,8 @@ from joblib import Parallel, delayed, parallel_backend
 from tqdm import tqdm 
 from scipy.linalg import solve_triangular
 
-IMPLEMENTED_ENERGIES = ['cluster', 'lowrank', 'conic', 'cluster-nongram']
+
+IMPLEMENTED_ENERGIES = ['cluster', 'lowrank', 'conic', 'convex']
 N_FLOAT_THRESHOLD = 20000
 
 class EnergyClass(object):
@@ -159,6 +160,8 @@ class ClusteringEnergy(EnergyClass):
         if len(self.indices) == 1:
             # simple case, just switch dists with new i dists (self.near is already all zeros, nothing to change)
             self.dists = self.D[:,i].copy()
+            self.indices[t] = i
+            self.compute_energy()
             return 
         
         if self.next_near is None: # ensure we are prepped to swap
@@ -230,6 +233,13 @@ class ClusteringEnergy(EnergyClass):
         return (dists/dists.max())**(self.p)
     
     def compute_eager_swap_values(self, idx): # Alg. 8.4
+        if len(self.indices) == 1:
+            d_i = self.D[:,idx].copy()
+            if self.p is not None:
+                return np.array([np.linalg.norm(d_i, ord=self.p)])
+            else:
+                return np.array([np.max(d_i)])
+            
         if idx in self.indices: # should be ignored
             return np.ones(len(self.indices))*self.energy*(1.1)
         
@@ -757,8 +767,6 @@ class ConicHullEnergy(EnergyClass):
         super().__init__(X, p=p)
         assert self.X.min() >= -1e-13 # ensure non-negativity
         self.sparse_flag = sps.issparse(self.X)
-
-        # Compute Euclidean norms raised to the pth power of each row
         if self.sparse_flag:
             self.dists = sps.linalg.norm(self.X, ord=2, axis=0).flatten()
         else:
@@ -803,7 +811,7 @@ class ConicHullEnergy(EnergyClass):
             dists, _ = self.nnls_OGM_gram(idx_to_swap=idx_to_swap, returnH=False)
         if self.p is None:
             return 1.0*(dists == np.max(dists))   # mask where dists is largest
-        return dists**(self.p)
+        return (dists/dists.max())**(self.p)
 
     def swap(self, t, i, debug=False):
         assert (t < len(self.indices))  and (t >= 0)
@@ -958,3 +966,216 @@ class ConicHullEnergy(EnergyClass):
             return dist_vals, H 
         
         return dist_vals, None
+
+
+
+
+
+class ConvexHullEnergy(EnergyClass):
+    def __init__(self, X, p=2, n_jobs=4, verbose=False):
+        super().__init__(X, p=p)
+        self.X = X
+        # center the data (usual practice in archetypal analysis)
+        self.X -= self.X.mean(axis=1, keepdims=True)
+        self.G = self.X.T @ self.X
+        self.Gdiag = np.diagonal(self.G).flatten()
+        self.dists = np.sqrt(self.Gdiag).flatten()  # initial distances are just ||x_i||
+        self.compute_energy()
+        self.use_previous = True
+        self.verbose = verbose
+        self.n_jobs = n_jobs
+        self.type = "convex"
+        self.sst = float(np.sum(self.Gdiag))  # Total sum of squares: ||X||_F^2
+        
+
+    def set_k(self, k):
+        super().set_k(k)
+        self.W = np.zeros((self.X.shape[0], self.k))
+        self.H = np.zeros((self.k, self.n))
+        self.G_S = np.zeros((self.k, self.n)) 
+        return 
+    
+        
+    def add(self, i):
+        if self.k is None:
+            raise NotImplementedError("Iterative allocation of memory for ConicHullEnergy objects not yet implemented. Must set desired k with ConicHullEnergy.set_k(k)")
+        self.W[:,len(self.indices)] = self.X[:,i].flatten()
+        self.G_S[len(self.indices),:] = self.G[:,i].flatten()
+        self.indices.append(i)
+        dists, H = self.nnls_gram(returnH=True)
+        self.H[:len(self.indices),:] = H 
+        self.dists = dists 
+        self.compute_energy()
+        
+        return
+
+    def compute_swap_distances(self, idx_to_swap):
+        if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to sampling via ||x_i||
+            dists = np.sqrt(self.Gdiag).flatten()
+        else:
+            dists, _ = self.nnls_gram(idx_to_swap=idx_to_swap, returnH=False)
+        if self.p is None:
+            return 1.0*(dists == np.max(dists))   # mask where dists is largest
+        return (dists/dists.max())**(self.p)
+
+    def swap(self, t, i, debug=False):
+        assert (t < len(self.indices))  and (t >= 0)
+        if i in self.indices:
+            print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
+            return 
+        self.indices[t] = i 
+        self.G_S[t,:] = self.G[:,i].flatten()
+        dists, H = self.nnls_gram(returnH=True) 
+        self.H = H   # assuming swap is only done with len(self.indices) = self.k
+        self.dists = dists 
+        self.compute_energy()
+        
+    
+    def search_distances(self, candidates):
+        if self.verbose:
+            iterator = tqdm(candidates, total=len(candidates))
+            iterator.set_description(f"Computing conic hull search values... len(self.indices) = {len(self.indices)}")
+        else:
+            iterator = candidates
+        
+        if self.n_jobs is not None:
+            with parallel_backend("loky", inner_max_num_threads=1):
+                outs = Parallel(n_jobs=self.n_jobs)(
+                    delayed(self.nnls_gram)(search_ind=c, returnH=False) for c in iterator)
+                search_dists = [out[0] for out in outs]
+        else:
+            search_dists = [self.nnls_gram(search_ind=c, returnH=False)[0] for c in iterator]
+        
+        
+        
+        return np.array(search_dists) 
+
+    def compute_eager_swap_values(self, idx):
+        if idx in self.indices:
+            return np.ones(len(self.indices))*self.energy*(1.0000001)
+        r = np.hstack([self.nnls_gram(search_ind=idx, idx_to_swap=j, returnH=False)[0].reshape(-1, 1) \
+                      for j in range(len(self.indices))])
+        if self.p is None:
+            r = np.max(r, axis=0)
+        else:
+            r = np.linalg.norm(r, axis=0, ord=self.p)
+        return r
+        
+    
+
+    def nnls_gram(self, search_ind=None, idx_to_swap=None, delta=1e-6, seed=42, maxiter=500, returnH=True, verbose=False, muH_init=1.0, inner_iters=10):
+        """
+        Fit convex weights H for fixed prototypes W = X[:, idx],
+        using only the Gram matrix G = X^T X.
+
+        Solves:
+            min_H ||X - W H||_F^2
+            s.t. H >= 0, sum_k H_{k,j} = 1 for all j
+
+        Parameters
+        ----------
+        search_ind : int   (0 <= search_ind < n)
+            Index of candidate prototype to include 
+        idx_to_swap : int  (0 <= idx_to_swap < k)
+            Index of current prototype to remove 
+        delta : float
+            Relative squared distances convergence tolerance
+        seed : int 
+            Random state seed for reproducibility
+        maxiter : int
+            Maximum outer iterations
+        returnH : bool 
+            Return the convex weights H after the computation
+        verbose : bool
+            Print convergence diagnostics
+        muH_init : float
+            Initial step size for projected gradient
+        inner_iters : int
+            Number of projected-gradient steps per outer iteration
+        
+
+        Returns
+        -------
+        dist_vals : float
+            Root sum of squared reconstruction error
+        H : (k, n) ndarray
+            Convex weights (columns sum to 1)
+        """
+        rand_state = np.random.RandomState(seed)
+
+        S_ind_all = self.indices[:]
+
+        if idx_to_swap is not None:
+            if search_ind is not None:
+                S_ind_all[idx_to_swap] = search_ind 
+            else:
+                S_ind_all = S_ind_all[:idx_to_swap] + S_ind_all[idx_to_swap+1:]
+        else:
+            if search_ind is not None:
+                S_ind_all = S_ind_all + [search_ind]
+
+        # --- Gram submatrices ---
+        WtW = self.G[np.ix_(S_ind_all, S_ind_all)]                 # (k, k)
+        WtX = self.G[S_ind_all,:]        # (k, n)
+
+        # --- Initialize H ---
+        H = -np.log(rand_state.random(WtX.shape))
+        H = H / (np.sum(H, axis=0, keepdims=True) + 1e-12)
+
+        # Initial d (squared distances)
+        HHt = H @ H.T
+        d = self.sst - 2.0 * np.sum(WtX * H) + np.sum(WtW * HHt)
+
+        muH = float(muH_init)
+        dd = np.inf
+        it = 0
+        e = np.ones((len(S_ind_all), 1))
+
+        # --- Main loop ---
+        while (abs(dd) >= delta * abs(d)) and it < maxiter:
+            it += 1
+            d_old = d
+
+            for _ in range(inner_iters):
+                d_inner_old = d
+
+                # Gradient: g = (W^T W H - W^T X) / (SST / n)
+                g = (WtW @ H - WtX) / (self.sst / float(self.n))
+
+                # Project gradient onto simplex tangent space
+                g = g - e @ np.sum(g * H, axis=0, keepdims=True)
+
+                Hold = H
+                while True:
+                    H = Hold - muH * g
+                    H = ConvexHullEnergy._project_to_simplex_columns(H)
+
+                    HHt = H @ H.T
+                    d = self.sst - 2.0 * np.sum(WtX * H) + np.sum(WtW * HHt)
+                    
+                    if d <= d_inner_old * (1.0 + 1e-9):
+                        muH *= 1.2
+                        break
+                    muH /= 2.0
+
+            dd = d_old - d
+
+            if verbose:
+                print(f"iter {it:4d} | d {d: .4e} | ",  fr"Delta-rel {dd/abs(d): .2e}")
+
+        dist_vals = np.clip(np.diagonal(self.G) - 2.*(WtX * H).sum(axis=0) + ((WtW @ H) * H).sum(axis=0), 0.0, None)
+        assert np.isclose(dist_vals.sum(), d)
+        dist_vals = np.sqrt(dist_vals)    # revert to Euclidean distances
+        if returnH:
+            return dist_vals, H 
+        
+        return dist_vals, None
+    
+    @staticmethod
+    def _project_to_simplex_columns(A: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+        """
+        Project columns onto the probability simplex via
+        nonnegativity + column normalization.
+        """
+        A = np.maximum(A, 0.0)
+        return A / (np.sum(A, axis=0, keepdims=True) + eps)

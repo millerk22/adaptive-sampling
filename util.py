@@ -122,6 +122,8 @@ def run_experiment(X, p, method_str, results, args, labels=None):
             # Instantiate an Energy object for this test
             if args.energy == "conic":
                 Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
+            elif args.energy == "convex":
+                Energy = ConvexHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
             elif args.energy == "cluster":
                 Energy = ClusteringEnergy(X, p=p)
             elif args.energy == "lowrank":
@@ -153,6 +155,8 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
                     Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
+                elif args.energy == "convex":
+                    Energy = ConvexHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)
                 elif args.energy == "cluster":
                     Energy = ClusteringEnergy(X, p=p)
                 elif args.energy == "lowrank":
@@ -170,8 +174,6 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                     # don't do a swap since search build is already "optimal subset of size 1" 
                     print(f"Skipping swap phase with k_ = {k_} for {swap_method}...")
                     # in this case the sampler values will just be empty lists below
-                elif k_ == 1 and args.energy == "cluster":
-                    print(f"Skipping k_ = 1 for cluster energy")
                 else:
                     sampler.swap_phase(method=swap_method, debug=False)
                 final_swap_values.append(Energy.energy)
@@ -192,77 +194,6 @@ def run_experiment(X, p, method_str, results, args, labels=None):
         results[method_str]["seeds"].append(seed)
 
     return results 
-
-
-
-
-
-# Code to perform analogue of Lloyd's algorithm for p >= 1 (not just p = 2) in Clustering case
-
-def euclidean_p_center(points, p, tol=1e-4):
-    def objective(c):
-        diff = points - c
-        dists = np.linalg.norm(diff, axis=1)
-        if p is not None:
-            return np.sum(dists**p)
-        return dists[np.argmax(dists)]
-    
-    c0 = np.mean(points, axis=0)  # initial guess
-    result = minimize(objective, c0, method='L-BFGS-B', tol=tol)
-    return result.x
-
-def euclidean_p_kmeans(X, centers=None, p=2, k=10, max_iter=100, tol=1e-4):
-    n, d = X.shape
-    if centers is None:
-        centers = X[np.random.choice(n, k, replace=False)]
-    else:
-        k = centers.shape[0]
-
-    for _ in range(max_iter):
-        # Assignment step: distances^p using Euclidean norm (M step)
-        D = pairwise_distances(X, centers, metric='euclidean')
-        labels = np.argmin(D, axis=1)
-
-        # Update centers step (E step)
-        new_centers = []
-        for l in range(k):
-            cluster_points = X[labels == l]
-            if len(cluster_points) == 0:
-                new_centers.append(X[np.random.choice(n)])
-            else:
-                c_l = euclidean_p_center(cluster_points, p)
-                new_centers.append(c_l)
-        new_centers = np.vstack(new_centers)
-
-        shift = np.linalg.norm(new_centers - centers)
-        centers = new_centers
-        if shift < tol:
-            break
-
-    return centers, labels
-
-
-def get_reference_inds(X, labels, p=2):
-    k = np.unique(labels).size 
-
-    # get initial centroids from ground truth labelings 
-    mus = []
-    for i in np.unique(labels):
-        i_inds = np.where(labels == i)[0].tolist()
-        mu = euclidean_p_center(X[i_inds], p=p)
-        mus.append(mu)
-    
-    # iterate with Lloyd's algorithm to further refine centroids
-    centers_p, labels_p = euclidean_p_kmeans(X, centers=np.array(mus), p=p)
-    reference_inds = []
-    for i in np.unique(labels_p):
-        i_inds = np.where(labels_p == i)[0]
-
-        # choose the point that is closest each centroid to represent it in our reference_indices
-        reference_inds.append(i_inds[np.argmin(pairwise_distances(X[i_inds], centers_p[i,:].reshape(1,-1)))]) 
-    return reference_inds
-
-
 
 
 
