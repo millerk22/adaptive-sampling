@@ -1034,7 +1034,7 @@ class ConvexHullEnergy(EnergyClass):
     def search_distances(self, candidates):
         if self.verbose:
             iterator = tqdm(candidates, total=len(candidates))
-            iterator.set_description(f"Computing conic hull search values... len(self.indices) = {len(self.indices)}")
+            iterator.set_description(f"Computing convex hull search values... len(self.indices) = {len(self.indices)}")
         else:
             iterator = candidates
         
