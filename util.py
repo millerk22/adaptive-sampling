@@ -151,7 +151,7 @@ def run_experiment(X, p, method_str, results, args, labels=None):
             all_swap_times = {}
             all_swap_stag = {}
             
-            for k_ in tqdm(range(10, args.k+1), total=args.k, desc=f"Performing swaps for each of 1 to {args.k} points..."):
+            for k_ in tqdm(range(1, args.k+1), total=args.k, desc=f"Performing swaps for each of 1 to {args.k} points..."):
                 # Instantiate an Energy object for this test
                 if args.energy == "conic":
                     Energy = ConicHullEnergy(X, p=p, n_jobs=args.njobs, verbose=True)

@@ -766,19 +766,16 @@ class ConicHullEnergy(EnergyClass):
     def __init__(self, X, p=2, n_jobs=4, verbose=False):
         super().__init__(X, p=p)
         assert self.X.min() >= -1e-13 # ensure non-negativity
-        self.sparse_flag = sps.issparse(self.X)
-        if self.sparse_flag:
-            self.dists = sps.linalg.norm(self.X, ord=2, axis=0).flatten()
-        else:
-            self.dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
-        
+        self.G = self.X.T @ self.X
+        self.Gdiag = np.diagonal(self.G).flatten()
+        self.dists = np.sqrt(self.Gdiag).flatten()  # initial distances are just ||x_i||
         self.compute_energy()
         self.use_previous = True
-        self.G_diag = self.dists**2.
         self.verbose = verbose
         self.n_jobs = n_jobs
         self.type = "conic"
-        
+        self.sst = float(np.sum(self.Gdiag))  # Total sum of squares: ||X||_F^2
+
 
     def set_k(self, k):
         super().set_k(k)
@@ -791,11 +788,8 @@ class ConicHullEnergy(EnergyClass):
     def add(self, i):
         if self.k is None:
             raise NotImplementedError("Iterative allocation of memory for ConicHullEnergy objects not yet implemented. Must set desired k with ConicHullEnergy.set_k(k)")
-        if self.sparse_flag:
-            self.W[len(self.indices),:] = self.X[:,i].todense().A1.flatten()
-        else:
-            self.W[len(self.indices),:] = self.X[:,i].flatten()
-        self.G_S[len(self.indices),:] = self.X.T @ self.X[:,i].flatten()
+        self.W[len(self.indices),:] = self.X[:,i].flatten()
+        self.G_S[len(self.indices),:] = self.G[:,i].flatten()
         self.indices.append(i)
         dists, H = self.nnls_OGM_gram(returnH=True)
         self.H[:len(self.indices),:] = H 
@@ -806,7 +800,7 @@ class ConicHullEnergy(EnergyClass):
 
     def compute_swap_distances(self, idx_to_swap):
         if len(self.indices) == 1:  # if we only have a single index in indices, we are going back to sampling via ||x_i||
-            dists = np.linalg.norm(self.X, ord=2, axis=0).flatten()
+            dists = np.sqrt(self.Gdiag).flatten()
         else:
             dists, _ = self.nnls_OGM_gram(idx_to_swap=idx_to_swap, returnH=False)
         if self.p is None:
@@ -819,7 +813,7 @@ class ConicHullEnergy(EnergyClass):
             print(f"Warning: {i} already in self.indices -- not a valid swap. Skipping...")
             return 
         self.indices[t] = i 
-        self.G_S[t,:] = self.X.T @ self.X[:,i].flatten()
+        self.G_S[t,:] = self.G[:,i].flatten()
         dists, H = self.nnls_OGM_gram(returnH=True) 
         self.H = H   # assuming swap is only done with len(self.indices) = self.k
         self.dists = dists 
@@ -884,13 +878,13 @@ class ConicHullEnergy(EnergyClass):
                 S_ind_all = S_ind_all + [search_ind]
         
         if len(self.indices) == 0: # case of first iteration
-            G_S = self.X[:, S_ind_all].T @ self.X
+            G_S = self.G[S_ind_all, :]
         else:
             if idx_to_swap is not None: 
                 assert self.G_S.shape[0] == self.k  # swap move should only happen when self.G_S.shape[0] == self.k
                 if search_ind is not None: 
                     G_S = np.array(self.G_S, copy=True) 
-                    G_S[idx_to_swap, :] = self.X.T @ self.X[:,search_ind].flatten()
+                    G_S[idx_to_swap, :] = self.G[:,search_ind].flatten()
                 else:
                     G_S = np.delete(self.G_S, idx_to_swap, axis=0)
             else:
@@ -898,7 +892,7 @@ class ConicHullEnergy(EnergyClass):
                     G_S =  np.array(self.G_S[:len(S_ind_all),:], copy=True) 
                 else: # this is a build_phase search case, so include the search_ind now in G_S
                     G_S =  np.array(self.G_S[:len(S_ind_all),:], copy=True)
-                    G_S[-1,:] = (self.X.T @ self.X[:, search_ind]).flatten()
+                    G_S[-1,:] = (self.G[:, search_ind]).flatten()
         
         G_SS = G_S[:,S_ind_all]
 
@@ -953,7 +947,7 @@ class ConicHullEnergy(EnergyClass):
             if verbose:
                 EPS.append(eps)
         
-        dist_vals = self.G_diag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
+        dist_vals = self.Gdiag - 2.*(G_S * H).sum(axis=0) + ((G_SS @ H) * H).sum(axis=0)
         dist_vals[dist_vals < 0] = 0.0
         dist_vals = np.sqrt(dist_vals )    # we consider Euclidean distances 
         # if verbose:

@@ -62,6 +62,10 @@ def prep_args(args):
             args.numseeds = config['numseeds']
         if 'powers' in config:
             args.powers = config['powers']
+    else:
+        args.methods = ALL_METHODS
+        args.oversample = OVERSAMPLE_METHODS
+        args.overwrite = []
 
     args.seeds = np.arange(42, 42+args.numseeds) # define the random seeds
 
@@ -86,7 +90,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args = prep_args(args)
-
+    print(args)
     # load dataset and run test for the corresponding experiment name
     X, labels = load_dataset(args.dataset, n_test=args.ntest)
 
