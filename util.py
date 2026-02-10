@@ -5,7 +5,7 @@ from tqdm import tqdm
 from collections import defaultdict
 
 from energies import *
-from sampling import *
+from adaptive import *
 
 from sklearn.metrics import pairwise_distances
 from scipy.optimize import minimize
@@ -133,7 +133,7 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                 break
             
             # Perform the build function for this run
-            sampler = AdaptiveSampler(Energy, seed=seed, record=True)
+            sampler = AdaptiveAlgorithm(Energy, seed=seed, record=True)
             sampler.build_phase(k_todo, method=build_method)
             results[method_str]["build_times"].append(sampler.build_times)
             results[method_str]["build_values"].append(sampler.build_values)
@@ -169,7 +169,7 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                 Energy.init_set(indices_build[:k_])
 
                 # instantiate adaptive sampler
-                sampler = AdaptiveSampler(Energy, seed=seed, record=True)
+                sampler = AdaptiveAlgorithm(Energy, seed=seed, record=True)
                 if k_ == 1 and swap_method == "search":
                     # don't do a swap since search build is already "optimal subset of size 1" 
                     print(f"Skipping swap phase with k_ = {k_} for {swap_method}...")

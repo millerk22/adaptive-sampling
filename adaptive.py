@@ -4,7 +4,7 @@ from time import perf_counter
 from util import *
 
 
-class AdaptiveSampler(object):
+class AdaptiveAlgorithm(object):
     def __init__(self, Energy_, seed=42, record=False):
         self.Energy = Energy_ 
         self.seed = seed
