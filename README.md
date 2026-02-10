@@ -7,10 +7,10 @@ See ``requirements.txt`` file for some necessary packages for running this code.
 ---
 
 ### Energy Types: 
-* ``cluster``: $\mathcal{A}(\mathcal{Y}) = \mathcal{Y}$
-* ``lowrank``: $\mathcal{A}(\mathcal{Y}) = \operatorname{span}(\mathcal{Y})$
-* ``conic``: $\mathcal{A}(\mathcal{Y}) = \operatorname{coni}(\mathcal{Y}) ( = \operatorname{conv}(\mathcal{Y}\cup \{\mathbf{0}\}))$
-* ``convex``: $\mathcal{A}(\mathcal{Y}) = \operatorname{conv}(\mathcal{Y})$
+* ``cluster``: $A(\mathcal{Y}) = \mathcal{Y}$. Relates to kmedoids and kmeans clustering.
+* ``lowrank``: $\mathcal{A}(\mathcal{Y}) = \text{span}(\mathcal{Y})$. Relates to low rank matrix factorization.
+* ``conic``: $\mathcal{A}(\mathcal{Y}) = \text{coni}(\mathcal{Y}) ( = \text{conv}(\mathcal{Y}\cup \{\mathbf{0}\}))$. Relates to nonnegative matrix factorization (NMF).
+* ``convex``: $\mathcal{A}(\mathcal{Y}) = \text{conv}(\mathcal{Y})$. Relates to archetypal/archetypoid analysis.
  
 
 
