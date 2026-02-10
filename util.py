@@ -133,10 +133,10 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                 break
             
             # Perform the build function for this run
-            sampler = AdaptiveAlgorithm(Energy, seed=seed, record=True)
-            sampler.build_phase(k_todo, method=build_method)
-            results[method_str]["build_times"].append(sampler.build_times)
-            results[method_str]["build_values"].append(sampler.build_values)
+            algorithm = AdaptiveAlgorithm(Energy, seed=seed, record=True)
+            algorithm.build_phase(k_todo, method=build_method)
+            results[method_str]["build_times"].append(algorithm.build_times)
+            results[method_str]["build_values"].append(algorithm.build_values)
             results[method_str]["indices"].append(Energy.indices)
             
         else:
@@ -168,19 +168,19 @@ def run_experiment(X, p, method_str, results, args, labels=None):
                 # initialize with k_ points, will do swaps from here
                 Energy.init_set(indices_build[:k_])
 
-                # instantiate adaptive sampler
-                sampler = AdaptiveAlgorithm(Energy, seed=seed, record=True)
+                # instantiate adaptive algorithm
+                algorithm = AdaptiveAlgorithm(Energy, seed=seed, record=True)
                 if k_ == 1 and swap_method == "search":
                     # don't do a swap since search build is already "optimal subset of size 1" 
                     print(f"Skipping swap phase with k_ = {k_} for {swap_method}...")
-                    # in this case the sampler values will just be empty lists below
+                    # in this case the algorithm values will just be empty lists below
                 else:
-                    sampler.swap_phase(method=swap_method, debug=False)
+                    algorithm.swap_phase(method=swap_method, debug=False)
                 final_swap_values.append(Energy.energy)
                 final_swap_indices[k_] = Energy.indices
-                all_swap_values[k_] = sampler.swap_values 
-                all_swap_times[k_] = sampler.swap_times 
-                all_swap_stag[k_] = sampler.swap_stag
+                all_swap_values[k_] = algorithm.swap_values 
+                all_swap_times[k_] = algorithm.swap_times 
+                all_swap_stag[k_] = algorithm.swap_stag
                 
 
             # record all the relevant info from each of the swap runs
