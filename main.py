@@ -90,7 +90,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args = prep_args(args)
-    print(args)
+    
     # load dataset and run test for the corresponding experiment name
     X, labels = load_dataset(args.dataset, n_test=args.ntest)
 
