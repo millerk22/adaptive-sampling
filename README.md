@@ -44,4 +44,4 @@ For example, can run ``python3 main.py --dataset salinas --k 10`` to run the ada
 
 The script ``main.py`` also allows for passing in the path to a config ``.yml`` file that specifies experiment parameter settings. See ``./config.yml`` for an example file format. Usage through the command line is simply:
 
-```python3 main.py --config config.yml``
+``python3 main.py --config config.yml``
